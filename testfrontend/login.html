@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Log in - GSB Salak</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Log in</h1>
+    <nav>
+      <a href="index.html">Home</a>
+    </nav>
+  </header>
+
+  <form id="login-form" data-testid="login-form">
+    <label>
+      Username
+      <input name="username" data-testid="username-input" required />
+    </label>
+    <label>
+      Password
+      <input name="password" type="password" data-testid="password-input" required />
+    </label>
+    <button type="submit" data-testid="submit-button">Log in</button>
+  </form>
+
+  <p id="message" class="hidden" data-testid="message"></p>
+  <p><a href="register.html" data-testid="nav-register">Need an account? Register</a></p>
+
+  <script src="api.js"></script>
+  <script>
+    const form = document.getElementById("login-form");
+    const message = document.getElementById("message");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+
+      const formData = new FormData(form);
+      try {
+        const data = await apiFetch("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: formData.get("username"),
+            password: formData.get("password"),
+          }),
+        });
+        setToken(data.token);
+        window.location.href = "dashboard.html";
+      } catch (err) {
+        showError(message, err);
+        message.dataset.status = "error";
+      }
+    });
+  </script>
+</body>
+</html>

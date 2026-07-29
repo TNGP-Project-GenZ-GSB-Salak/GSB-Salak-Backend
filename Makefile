@@ -1,4 +1,4 @@
-.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test
+.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test frontend-install frontend-run frontend-test frontend-report
 
 build:
 	go build -o bin/api ./cmd/api
@@ -28,3 +28,15 @@ docker-down:
 
 test:
 	go test ./...
+
+frontend-install:
+	cd testfrontend && npm install && npx playwright install chromium
+
+frontend-run:
+	cd testfrontend && node server.js
+
+frontend-test:
+	cd testfrontend && npm test
+
+frontend-report:
+	cd testfrontend && npm run report
