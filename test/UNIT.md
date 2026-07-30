@@ -7,6 +7,11 @@ Real-Postgres integration tests now live in `test/integration/` (see
 `test/INTEGRATION.md`); end-to-end/UI coverage runs separately against
 `testfrontend` via Playwright (see root `CLAUDE.md`).
 
+This file is the high-level narrative — what's covered, why, and per-package coverage
+percentages. For a granular, one-row-per-scenario breakdown (`Prerequisites / Expected /
+Actual` for every individual test case, including each table-driven subtest counted
+separately), see **`test/TEST_CASES.md`**.
+
 ## Scope
 
 Unit tests target the **service layer** (business logic — validation,
