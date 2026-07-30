@@ -37,3 +37,37 @@ func toProductResponses(products []domain.Product) []productResponse {
 	}
 	return out
 }
+
+type holdingResponse struct {
+	ID             uuid.UUID       `json:"id"`
+	AccountID      uuid.UUID       `json:"account_id"`
+	ProductID      uuid.UUID       `json:"product_id"`
+	ProductName    string          `json:"product_name"`
+	Units          int64           `json:"units"`
+	TicketStart    int64           `json:"ticket_start"`
+	TicketEnd      int64           `json:"ticket_end"`
+	PurchaseAmount decimal.Decimal `json:"purchase_amount"`
+	PurchaseDate   string          `json:"purchase_date"`
+	MaturityDate   string          `json:"maturity_date"`
+}
+
+const dateOnlyLayout = "2006-01-02"
+
+func toHoldingResponses(holdings []domain.Holding, productNames map[uuid.UUID]string) []holdingResponse {
+	out := make([]holdingResponse, 0, len(holdings))
+	for _, h := range holdings {
+		out = append(out, holdingResponse{
+			ID:             h.ID,
+			AccountID:      h.AccountID,
+			ProductID:      h.ProductID,
+			ProductName:    productNames[h.ProductID],
+			Units:          h.Units,
+			TicketStart:    h.TicketStart,
+			TicketEnd:      h.TicketEnd,
+			PurchaseAmount: h.PurchaseAmount,
+			PurchaseDate:   h.PurchaseDate.Format(dateOnlyLayout),
+			MaturityDate:   h.MaturityDate.Format(dateOnlyLayout),
+		})
+	}
+	return out
+}

@@ -46,7 +46,7 @@ func main() {
 	// Services (composition root wires concrete services behind each domain's interface)
 	authService := usersvc.NewAuthService(userRepository, signer)
 	accountService := accountsvc.NewAccountService(accountRepository)
-	salakService := salaksvc.NewSalakService(productRepository, holdingRepository)
+	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService)
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository)
 
 	// HTTP handlers

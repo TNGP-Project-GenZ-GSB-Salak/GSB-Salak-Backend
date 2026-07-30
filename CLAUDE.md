@@ -43,7 +43,7 @@ internal/<domain>/
 └── http/                # package http — Gin handlers + DTOs, depends only on the Service interface
 ```
 
-The domains are `user`, `account`, `salak`, `transaction`. **`account` and `salak` must never import `transaction`** — `transaction` is the only domain that depends on other domains' `ports.go` interfaces (`account.Service`, `salak.Service`), injected at the composition root. This is the load-bearing rule in this codebase; if you're adding a feature that seems to require `account` or `salak` to know about `transaction`, the orchestration belongs in `transaction` instead.
+The domains are `user`, `account`, `salak`, `transaction`. **`account` and `salak` must never import `transaction`** — this is the load-bearing rule in this codebase; if you're adding a feature that seems to require `account` or `salak` to know about `transaction`, the orchestration belongs in `transaction` instead. Dependencies otherwise flow one way: `account` is a leaf (imports no sibling domain); `salak` depends on `account.Service` (e.g. `ListHoldingsByAccount` verifies account ownership via `accounts.GetByID` before returning holdings); `transaction` depends on both `account.Service` and `salak.Service`. All of these are `ports.go` interfaces injected at the composition root, never concrete repos/services from another domain's package.
 
 The composition root — `cmd/api/main.go` — is the only place concrete repos/services from different domains are wired together. It builds each domain's repository → service → http.Handler bottom-up, then registers routes.
 

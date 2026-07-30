@@ -31,4 +31,7 @@ type Service interface {
 	GetProduct(ctx context.Context, productID uuid.UUID) (domain.Product, error)
 	ValidatePurchase(product domain.Product, amount decimal.Decimal) error
 	MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (domain.Holding, error)
+	// ListHoldingsByAccount verifies userID owns accountID (via account.Service)
+	// before returning that account's holdings.
+	ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]domain.Holding, error)
 }

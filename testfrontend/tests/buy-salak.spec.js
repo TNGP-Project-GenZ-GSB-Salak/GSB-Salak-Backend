@@ -25,6 +25,10 @@ test.describe("buy salak", () => {
     await loginAsDemo(page);
     const fundingBefore = await readBalance(page, SAVINGS_ACCOUNT_NUMBER);
     const salakBefore = await readBalance(page, SALAK_ACCOUNT_NUMBER);
+    const holdingsBefore = await page.getByTestId("holding-row").count();
+
+    await expect(page.getByTestId("amount-input")).toHaveAttribute("step", "1000");
+    await expect(page.getByTestId("amount-hint")).toHaveText(/multiple of 1000 THB/i);
 
     await fillBuyForm(page, { amount: 30000, productLabel: "Digital Salak 1-Year" });
     await shoot(page, "form-filled");
@@ -45,6 +49,11 @@ test.describe("buy salak", () => {
 
     expect(await readBalance(page, SAVINGS_ACCOUNT_NUMBER)).toBe(fundingBefore - 30000);
     expect(await readBalance(page, SALAK_ACCOUNT_NUMBER)).toBe(salakBefore + 30000);
+
+    await expect(page.getByTestId("holding-row")).toHaveCount(holdingsBefore + 1);
+    const newHolding = page.getByTestId("holding-row").filter({ hasText: "Digital Salak 1-Year" }).last();
+    await expect(newHolding.getByTestId("holding-units")).toHaveText("300");
+    await expect(newHolding.getByTestId("holding-ticket-range")).toHaveText(`${ticketStart} - ${ticketEnd}`);
     await shoot(page, "accounts-updated");
   });
 

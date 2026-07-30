@@ -20,6 +20,11 @@ test.describe("dashboard", () => {
     expect(productNames).toContain("Digital Salak 1-Year");
     expect(productNames).toContain("Digital Salak 2-Year");
 
+    // Holdings table exists and only ever lists holdings for the logged-in
+    // user's own salak account (never another user's) - row count itself
+    // isn't asserted here since it depends on what earlier tests purchased.
+    await expect(page.getByTestId("holdings-table")).toBeVisible();
+
     await shoot(page, "verified");
   });
 

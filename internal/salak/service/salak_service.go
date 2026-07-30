@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
@@ -16,10 +17,11 @@ import (
 type SalakService struct {
 	products salak.ProductRepository
 	holdings salak.HoldingRepository
+	accounts account.Service
 }
 
-func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository) *SalakService {
-	return &SalakService{products: products, holdings: holdings}
+func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository, accounts account.Service) *SalakService {
+	return &SalakService{products: products, holdings: holdings, accounts: accounts}
 }
 
 var _ salak.Service = (*SalakService)(nil)
@@ -100,4 +102,16 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 	}
 
 	return *holding, nil
+}
+
+func (s *SalakService) ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]domain.Holding, error) {
+	if _, err := s.accounts.GetByID(ctx, userID, accountID); err != nil {
+		return nil, err
+	}
+
+	holdings, err := s.holdings.FindByAccountID(ctx, accountID)
+	if err != nil {
+		return nil, apperror.Internal("failed to list salak holdings", err)
+	}
+	return holdings, nil
 }

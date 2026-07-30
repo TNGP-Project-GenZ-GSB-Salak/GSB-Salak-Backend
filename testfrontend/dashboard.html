@@ -43,8 +43,25 @@
   </section>
 
   <section>
+    <h2>Active Salak</h2>
+    <table data-testid="holdings-table">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Units</th>
+          <th>Ticket range</th>
+          <th>Amount</th>
+          <th>Purchase date</th>
+          <th>Maturity date</th>
+        </tr>
+      </thead>
+      <tbody id="holdings-body" data-testid="holdings-body"></tbody>
+    </table>
+  </section>
+
+  <section>
     <h2>Buy Salak</h2>
-    <form id="buy-form" data-testid="buy-form">
+    <form id="buy-form" data-testid="buy-form" novalidate>
       <label>
         Funding account
         <select name="funding_account_id" data-testid="funding-account-select" required></select>
@@ -59,8 +76,9 @@
       </label>
       <label>
         Amount (THB)
-        <input name="amount" type="number" step="1" data-testid="amount-input" required />
+        <input name="amount" type="number" step="1000" data-testid="amount-input" required />
       </label>
+      <p id="amount-hint" data-testid="amount-hint"></p>
       <button type="submit" data-testid="buy-submit">Buy</button>
     </form>
 
@@ -87,23 +105,27 @@
 
     const accountsBody = document.getElementById("accounts-body");
     const productsBody = document.getElementById("products-body");
+    const holdingsBody = document.getElementById("holdings-body");
     const fundingSelect = document.querySelector('[name="funding_account_id"]');
     const salakSelect = document.querySelector('[name="salak_account_id"]');
     const productSelect = document.querySelector('[name="product_id"]');
+    const amountInput = document.querySelector('[name="amount"]');
+    const amountHint = document.getElementById("amount-hint");
     const buyForm = document.getElementById("buy-form");
     const buyError = document.getElementById("buy-error");
     const receipt = document.getElementById("receipt");
 
     let products = [];
+    let accountsCache = [];
 
     async function loadAccounts() {
-      const accounts = await apiFetch("/accounts");
+      accountsCache = await apiFetch("/accounts");
 
       accountsBody.innerHTML = "";
       fundingSelect.innerHTML = "";
       salakSelect.innerHTML = "";
 
-      for (const account of accounts) {
+      for (const account of accountsCache) {
         const row = document.createElement("tr");
         row.dataset.testid = "account-row";
         row.dataset.accountType = account.type;
@@ -122,6 +144,47 @@
           salakSelect.appendChild(option);
         }
       }
+
+      await loadHoldings();
+    }
+
+    async function loadHoldings() {
+      holdingsBody.innerHTML = "";
+
+      const salakAccounts = accountsCache.filter((a) => a.type === "salak");
+      for (const account of salakAccounts) {
+        const holdings = await apiFetch(`/salak/holdings?account_id=${account.id}`);
+        for (const holding of holdings) {
+          const row = document.createElement("tr");
+          row.dataset.testid = "holding-row";
+          row.innerHTML = `
+            <td data-testid="holding-product-name">${holding.product_name}</td>
+            <td data-testid="holding-units">${holding.units}</td>
+            <td data-testid="holding-ticket-range">${holding.ticket_start} - ${holding.ticket_end}</td>
+            <td data-testid="holding-amount">${holding.purchase_amount}</td>
+            <td data-testid="holding-purchase-date">${holding.purchase_date}</td>
+            <td data-testid="holding-maturity-date">${holding.maturity_date}</td>
+          `;
+          holdingsBody.appendChild(row);
+        }
+      }
+    }
+
+    function updateAmountHint() {
+      const product = products.find((p) => p.id === productSelect.value);
+      if (!product) {
+        amountHint.textContent = "";
+        return;
+      }
+      amountHint.textContent =
+        `Must be a multiple of ${product.step_amount} THB, ` +
+        `between ${product.min_purchase} and ${product.max_purchase} THB.`;
+      // The form has novalidate: these only drive the spinner's increment/decrement
+      // and assistive tech, never blocking submission - the server is the single
+      // source of truth for validation, surfaced uniformly through buy-error.
+      amountInput.min = product.min_purchase;
+      amountInput.max = product.max_purchase;
+      amountInput.step = product.step_amount;
     }
 
     async function loadProducts() {
@@ -144,7 +207,11 @@
 
         productSelect.appendChild(new Option(product.name, product.id));
       }
+
+      updateAmountHint();
     }
+
+    productSelect.addEventListener("change", updateAmountHint);
 
     buyForm.addEventListener("submit", async (e) => {
       e.preventDefault();
