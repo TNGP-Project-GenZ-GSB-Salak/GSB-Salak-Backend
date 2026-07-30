@@ -22,6 +22,15 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/accounts/{id}", h.GetByID)
 }
 
+// ListMine godoc
+// @Summary      List my accounts
+// @Description  Lists all accounts (savings and Salak) owned by the authenticated user.
+// @Tags         accounts
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  httpserver.DataEnvelope{data=[]accountResponse}
+// @Failure      401  {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/accounts [get]
 func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
 	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {
@@ -36,6 +45,18 @@ func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
 	httpserver.OK(w, http.StatusOK, toAccountResponses(accounts))
 }
 
+// GetByID godoc
+// @Summary      Get an account by id
+// @Description  Fetches a single account owned by the authenticated user.
+// @Tags         accounts
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      string  true  "Account ID (UUID)"
+// @Success      200  {object}  httpserver.DataEnvelope{data=accountResponse}
+// @Failure      400  {object}  httpserver.ErrorEnvelope
+// @Failure      401  {object}  httpserver.ErrorEnvelope
+// @Failure      404  {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/accounts/{id} [get]
 func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
 	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {

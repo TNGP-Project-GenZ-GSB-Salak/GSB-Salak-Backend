@@ -23,6 +23,18 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/transactions", h.ListHistory)
 }
 
+// BuySalak godoc
+// @Summary      Buy Salak
+// @Description  Transfers funds from a savings account into a Salak account, minting a lottery holding.
+// @Tags         transactions
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      buySalakRequest  true  "Purchase details"
+// @Success      201      {object}  httpserver.DataEnvelope{data=buySalakResponse}
+// @Failure      400      {object}  httpserver.ErrorEnvelope
+// @Failure      401      {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/transactions/buy-salak [post]
 func (h *Handler) BuySalak(w http.ResponseWriter, r *http.Request) {
 	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {
@@ -43,6 +55,19 @@ func (h *Handler) BuySalak(w http.ResponseWriter, r *http.Request) {
 	httpserver.OK(w, http.StatusCreated, toBuySalakResponse(receipt))
 }
 
+// ListHistory godoc
+// @Summary      List transaction history
+// @Description  Lists ledger entries (debits/credits) for the given account.
+// @Tags         transactions
+// @Produce      json
+// @Security     BearerAuth
+// @Param        account_id  query     string  true   "Account ID (UUID)"
+// @Param        limit       query     int     false  "Max number of entries to return"
+// @Param        offset      query     int     false  "Number of entries to skip"
+// @Success      200  {object}  httpserver.DataEnvelope{data=[]ledgerEntryResponse}
+// @Failure      400  {object}  httpserver.ErrorEnvelope
+// @Failure      401  {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/transactions [get]
 func (h *Handler) ListHistory(w http.ResponseWriter, r *http.Request) {
 	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {

@@ -1,4 +1,4 @@
-.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test frontend-install frontend-run frontend-test frontend-report
+.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test swagger frontend-install frontend-run frontend-test frontend-report
 
 build:
 	go build -o bin/api ./cmd/api
@@ -7,6 +7,9 @@ build:
 
 run:
 	go run ./cmd/api
+
+swagger:
+	swag init -g cmd/api/main.go -o docs --parseInternal
 
 migrate-up:
 	go run ./cmd/migrate up

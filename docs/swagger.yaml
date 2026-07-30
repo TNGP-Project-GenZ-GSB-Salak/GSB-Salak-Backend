@@ -1,0 +1,518 @@
+basePath: /
+definitions:
+  domain.Type:
+    enum:
+    - savings
+    - salak
+    type: string
+    x-enum-varnames:
+    - TypeSavings
+    - TypeSalak
+  http.accountResponse:
+    properties:
+      account_number:
+        type: string
+      balance:
+        type: number
+      created_at:
+        type: string
+      currency:
+        type: string
+      id:
+        type: string
+      type:
+        $ref: '#/definitions/domain.Type'
+    type: object
+  http.buySalakRequest:
+    properties:
+      amount:
+        type: number
+      funding_account_id:
+        type: string
+      product_id:
+        type: string
+      salak_account_id:
+        type: string
+    required:
+    - amount
+    - funding_account_id
+    - product_id
+    - salak_account_id
+    type: object
+  http.buySalakResponse:
+    properties:
+      amount:
+        type: number
+      funding_account_balance_after:
+        type: number
+      maturity_date:
+        type: string
+      product_name:
+        type: string
+      purchase_date:
+        type: string
+      reference_id:
+        type: string
+      salak_account_balance_after:
+        type: number
+      ticket_end:
+        type: string
+      ticket_start:
+        type: string
+      units:
+        type: integer
+    type: object
+  http.holdingResponse:
+    properties:
+      account_id:
+        type: string
+      id:
+        type: string
+      maturity_date:
+        type: string
+      product_id:
+        type: string
+      product_name:
+        type: string
+      purchase_amount:
+        type: number
+      purchase_date:
+        type: string
+      ticket_end:
+        type: string
+      ticket_start:
+        type: string
+      units:
+        type: integer
+    type: object
+  http.ledgerEntryResponse:
+    properties:
+      account_id:
+        type: string
+      amount:
+        type: number
+      balance_after:
+        type: number
+      created_at:
+        type: string
+      description:
+        type: string
+      holding_id:
+        type: string
+      id:
+        type: string
+      reference_id:
+        type: string
+      type:
+        type: string
+    type: object
+  http.loginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  http.loginResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/http.userResponse'
+    type: object
+  http.productResponse:
+    properties:
+      code:
+        type: string
+      id:
+        type: string
+      max_purchase:
+        type: number
+      min_purchase:
+        type: number
+      name:
+        type: string
+      step_amount:
+        type: number
+      term_months:
+        type: integer
+      unit_price:
+        type: number
+    type: object
+  http.registerRequest:
+    properties:
+      full_name:
+        type: string
+      password:
+        type: string
+      username:
+        type: string
+    required:
+    - full_name
+    - password
+    - username
+    type: object
+  http.userResponse:
+    properties:
+      created_at:
+        type: string
+      full_name:
+        type: string
+      id:
+        type: string
+      username:
+        type: string
+    type: object
+  httpserver.DataEnvelope:
+    properties:
+      data: {}
+    type: object
+  httpserver.ErrorEnvelope:
+    properties:
+      error:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Backend API mimicking the "Digital Salak" feature of GSB's MyMo mobile
+    banking app.
+  title: GSB Digital Salak API
+  version: "1.0"
+paths:
+  /api/v1/accounts:
+    get:
+      description: Lists all accounts (savings and Salak) owned by the authenticated
+        user.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/http.accountResponse'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List my accounts
+      tags:
+      - accounts
+  /api/v1/accounts/{id}:
+    get:
+      description: Fetches a single account owned by the authenticated user.
+      parameters:
+      - description: Account ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/http.accountResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get an account by id
+      tags:
+      - accounts
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates a user and returns a JWT bearer token.
+      parameters:
+      - description: Login credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/http.loginResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      summary: Log in
+      tags:
+      - auth
+  /api/v1/auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account.
+      parameters:
+      - description: Registration details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.registerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/http.userResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      summary: Register a new user
+      tags:
+      - auth
+  /api/v1/salak/holdings:
+    get:
+      description: Lists the lottery ticket holdings minted for the given Salak account.
+      parameters:
+      - description: Salak account ID (UUID)
+        in: query
+        name: account_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/http.holdingResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List Salak holdings for an account
+      tags:
+      - salak
+  /api/v1/salak/products:
+    get:
+      description: Lists all available Salak lottery-savings-bond products.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/http.productResponse'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List Salak products
+      tags:
+      - salak
+  /api/v1/salak/products/{id}:
+    get:
+      parameters:
+      - description: Product ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/http.productResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get a Salak product by id
+      tags:
+      - salak
+  /api/v1/transactions:
+    get:
+      description: Lists ledger entries (debits/credits) for the given account.
+      parameters:
+      - description: Account ID (UUID)
+        in: query
+        name: account_id
+        required: true
+        type: string
+      - description: Max number of entries to return
+        in: query
+        name: limit
+        type: integer
+      - description: Number of entries to skip
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/http.ledgerEntryResponse'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List transaction history
+      tags:
+      - transactions
+  /api/v1/transactions/buy-salak:
+    post:
+      consumes:
+      - application/json
+      description: Transfers funds from a savings account into a Salak account, minting
+        a lottery holding.
+      parameters:
+      - description: Purchase details
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/http.buySalakRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/httpserver.DataEnvelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/http.buySalakResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/httpserver.ErrorEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Buy Salak
+      tags:
+      - transactions
+  /healthz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Health check
+      tags:
+      - health
+securityDefinitions:
+  BearerAuth:
+    description: Type "Bearer" followed by a space and the JWT token from POST /api/v1/auth/login.
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

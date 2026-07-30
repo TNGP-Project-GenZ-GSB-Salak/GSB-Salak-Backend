@@ -29,6 +29,15 @@ import (
 	usersvc "github.com/ciaabcdefg/gsb-salak-backend/internal/user/service"
 )
 
+// @title           GSB Digital Salak API
+// @version         1.0
+// @description     Backend API mimicking the "Digital Salak" feature of GSB's MyMo mobile banking app.
+// @host            localhost:8080
+// @BasePath        /
+// @securityDefinitions.apikey BearerAuth
+// @in                          header
+// @name                        Authorization
+// @description                 Type "Bearer" followed by a space and the JWT token from POST /api/v1/auth/login.
 func main() {
 	cfg := config.Load()
 
