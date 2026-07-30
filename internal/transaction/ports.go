@@ -20,8 +20,8 @@ type BuySalakReceipt struct {
 	ReferenceID                uuid.UUID
 	ProductName                string
 	Units                      int64
-	TicketStart                int64
-	TicketEnd                  int64
+	TicketStart                string
+	TicketEnd                  string
 	Amount                     decimal.Decimal
 	FundingAccountBalanceAfter decimal.Decimal
 	SalakAccountBalanceAfter   decimal.Decimal

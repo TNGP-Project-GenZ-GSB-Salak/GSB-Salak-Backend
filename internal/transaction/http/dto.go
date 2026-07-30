@@ -20,8 +20,8 @@ type buySalakResponse struct {
 	ReferenceID                uuid.UUID       `json:"reference_id"`
 	ProductName                string          `json:"product_name"`
 	Units                      int64           `json:"units"`
-	TicketStart                int64           `json:"ticket_start"`
-	TicketEnd                  int64           `json:"ticket_end"`
+	TicketStart                string          `json:"ticket_start"`
+	TicketEnd                  string          `json:"ticket_end"`
 	Amount                     decimal.Decimal `json:"amount"`
 	FundingAccountBalanceAfter decimal.Decimal `json:"funding_account_balance_after"`
 	SalakAccountBalanceAfter   decimal.Decimal `json:"salak_account_balance_after"`

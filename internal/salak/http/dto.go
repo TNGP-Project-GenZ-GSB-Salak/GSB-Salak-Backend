@@ -44,8 +44,8 @@ type holdingResponse struct {
 	ProductID      uuid.UUID       `json:"product_id"`
 	ProductName    string          `json:"product_name"`
 	Units          int64           `json:"units"`
-	TicketStart    int64           `json:"ticket_start"`
-	TicketEnd      int64           `json:"ticket_end"`
+	TicketStart    string          `json:"ticket_start"`
+	TicketEnd      string          `json:"ticket_end"`
 	PurchaseAmount decimal.Decimal `json:"purchase_amount"`
 	PurchaseDate   string          `json:"purchase_date"`
 	MaturityDate   string          `json:"maturity_date"`
@@ -62,8 +62,8 @@ func toHoldingResponses(holdings []domain.Holding, productNames map[uuid.UUID]st
 			ProductID:      h.ProductID,
 			ProductName:    productNames[h.ProductID],
 			Units:          h.Units,
-			TicketStart:    h.TicketStart,
-			TicketEnd:      h.TicketEnd,
+			TicketStart:    h.TicketStartID(),
+			TicketEnd:      h.TicketEndID(),
 			PurchaseAmount: h.PurchaseAmount,
 			PurchaseDate:   h.PurchaseDate.Format(dateOnlyLayout),
 			MaturityDate:   h.MaturityDate.Format(dateOnlyLayout),

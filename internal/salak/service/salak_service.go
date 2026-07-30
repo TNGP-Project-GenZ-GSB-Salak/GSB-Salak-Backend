@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
+	"math/big"
 	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
@@ -13,6 +15,26 @@ import (
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
+
+// thaiConsonantStart/Count span ก (U+0E01) through ฮ (U+0E2E) inclusive -
+// exactly the 46 Thai consonant letters, nothing else in that range.
+const (
+	thaiConsonantStart = 0x0E01
+	thaiConsonantCount = 46
+)
+
+// randomTicketLetter picks one of the 46 Thai consonants uniformly at
+// random (crypto/rand.Int avoids the modulo bias a single random byte % 46
+// would introduce). Only the letter is randomized; the numeric part of a
+// ticket ID is sequential (see ReserveTicketRange) and already guarantees
+// global uniqueness, so the letter needs no uniqueness logic of its own.
+func randomTicketLetter() (string, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(thaiConsonantCount))
+	if err != nil {
+		return "", err
+	}
+	return string(rune(thaiConsonantStart + n.Int64())), nil
+}
 
 type SalakService struct {
 	products salak.ProductRepository
@@ -81,6 +103,11 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 		return domain.Holding{}, apperror.Internal("failed to reserve ticket range", err)
 	}
 
+	letter, err := randomTicketLetter()
+	if err != nil {
+		return domain.Holding{}, apperror.Internal("failed to generate ticket letter", err)
+	}
+
 	now := time.Now().UTC()
 	purchaseDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
@@ -89,6 +116,7 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 		AccountID:      accountID,
 		ProductID:      productID,
 		Units:          units,
+		TicketLetter:   letter,
 		TicketStart:    start,
 		TicketEnd:      end,
 		PurchaseAmount: amount,

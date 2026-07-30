@@ -14,7 +14,7 @@ test.describe("transaction history", () => {
     await page.getByTestId("funding-account-select").selectOption(SAVINGS_ACCOUNT_ID);
     await page.getByTestId("salak-account-select").selectOption(SALAK_ACCOUNT_ID);
     await page.getByTestId("product-select").selectOption({ label: "Digital Salak 2-Year" });
-    await page.getByTestId("amount-input").fill("1000");
+    await page.getByTestId("amount-select").selectOption("1000");
     await page.getByTestId("buy-submit").click();
     await expect(page.getByTestId("receipt")).toBeVisible();
     await shoot(page, "purchase-made");

@@ -76,7 +76,19 @@
       </label>
       <label>
         Amount (THB)
-        <input name="amount" type="number" step="1000" data-testid="amount-input" required />
+        <select name="amount_option" data-testid="amount-select" required>
+          <option value="1000">1,000</option>
+          <option value="5000">5,000</option>
+          <option value="10000">10,000</option>
+          <option value="50000">50,000</option>
+          <option value="100000">100,000</option>
+          <option value="500000">500,000</option>
+          <option value="custom">Specify amount</option>
+        </select>
+      </label>
+      <label id="custom-amount-label" class="hidden">
+        Custom amount (THB)
+        <input name="custom_amount" type="number" step="1000" data-testid="custom-amount-input" />
       </label>
       <p id="amount-hint" data-testid="amount-hint"></p>
       <button type="submit" data-testid="buy-submit">Buy</button>
@@ -109,7 +121,9 @@
     const fundingSelect = document.querySelector('[name="funding_account_id"]');
     const salakSelect = document.querySelector('[name="salak_account_id"]');
     const productSelect = document.querySelector('[name="product_id"]');
-    const amountInput = document.querySelector('[name="amount"]');
+    const amountSelect = document.querySelector('[name="amount_option"]');
+    const customAmountLabel = document.getElementById("custom-amount-label");
+    const customAmountInput = document.querySelector('[name="custom_amount"]');
     const amountHint = document.getElementById("amount-hint");
     const buyForm = document.getElementById("buy-form");
     const buyError = document.getElementById("buy-error");
@@ -182,9 +196,18 @@
       // The form has novalidate: these only drive the spinner's increment/decrement
       // and assistive tech, never blocking submission - the server is the single
       // source of truth for validation, surfaced uniformly through buy-error.
-      amountInput.min = product.min_purchase;
-      amountInput.max = product.max_purchase;
-      amountInput.step = product.step_amount;
+      customAmountInput.min = product.min_purchase;
+      customAmountInput.max = product.max_purchase;
+      customAmountInput.step = product.step_amount;
+    }
+
+    function updateCustomAmountVisibility() {
+      const isCustom = amountSelect.value === "custom";
+      customAmountLabel.classList.toggle("hidden", !isCustom);
+      customAmountInput.required = isCustom;
+      if (isCustom) {
+        customAmountInput.focus();
+      }
     }
 
     async function loadProducts() {
@@ -212,6 +235,8 @@
     }
 
     productSelect.addEventListener("change", updateAmountHint);
+    amountSelect.addEventListener("change", updateCustomAmountVisibility);
+    updateCustomAmountVisibility();
 
     buyForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -219,6 +244,9 @@
       receipt.classList.add("hidden");
 
       const formData = new FormData(buyForm);
+      const amountOption = formData.get("amount_option");
+      const amount = amountOption === "custom" ? Number(formData.get("custom_amount")) : Number(amountOption);
+
       try {
         const data = await apiFetch("/transactions/buy-salak", {
           method: "POST",
@@ -226,7 +254,7 @@
             funding_account_id: formData.get("funding_account_id"),
             salak_account_id: formData.get("salak_account_id"),
             product_id: formData.get("product_id"),
-            amount: Number(formData.get("amount")),
+            amount,
           }),
         });
 
