@@ -1,4 +1,4 @@
-.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test swagger frontend-install frontend-run frontend-test frontend-report
+.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report
 
 build:
 	go build -o bin/api ./cmd/api
@@ -31,6 +31,9 @@ docker-down:
 
 test:
 	go test ./...
+
+test-integration: docker-up migrate-up
+	go test -tags=integration ./test/integration/...
 
 frontend-install:
 	cd testfrontend && npm install && npx playwright install chromium

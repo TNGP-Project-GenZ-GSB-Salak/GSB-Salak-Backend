@@ -3,8 +3,8 @@
 This documents the Go unit test suite added under `internal/`. Before this,
 `go test ./...` had no test files anywhere in the module (see the root
 `CLAUDE.md`'s note: "test suite not yet written — see test/integration/").
-`test/integration/` is still empty and reserved for real-Postgres
-integration tests; end-to-end/UI coverage runs separately against
+Real-Postgres integration tests now live in `test/integration/` (see
+`test/INTEGRATION.md`); end-to-end/UI coverage runs separately against
 `testfrontend` via Playwright (see root `CLAUDE.md`).
 
 ## Scope
