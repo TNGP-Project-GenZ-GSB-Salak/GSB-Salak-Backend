@@ -1,6 +1,6 @@
 # GSB Salak Backend
 
-A Go backend (Gin + GORM + PostgreSQL) that mimics the "Digital Salak" feature of GSB's MyMo mobile banking app: a user holds multiple bank accounts — a savings account and a premium digital lottery-savings-bond account ("Salak") — and can buy Salak by transferring funds from savings into a Salak account, which mints a lottery holding with a sequential ticket-number range.
+A Go backend (chi + GORM + PostgreSQL) that mimics the "Digital Salak" feature of GSB's MyMo mobile banking app: a user holds multiple bank accounts — a savings account and a premium digital lottery-savings-bond account ("Salak") — and can buy Salak by transferring funds from savings into a Salak account, which mints a lottery holding with a sequential ticket-number range.
 
 Built as a **modular monolith**: one Go module and one Postgres database, but each business domain (`user`, `account`, `salak`, `transaction`) owns its own Postgres schema and its own package tree, communicating in-process through narrow Go interfaces rather than HTTP.
 

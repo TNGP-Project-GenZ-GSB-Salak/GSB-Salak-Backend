@@ -20,7 +20,7 @@ and needs no `docker compose up`.
 | Layer | Why it's out of scope here |
 |---|---|
 | `internal/*/repository` (GORM repos) | Thin wrappers around real SQL/GORM calls (locking clauses, upserts, joins) — correctness depends on an actual Postgres schema, so these belong in `test/integration/`, not mocked unit tests. |
-| `internal/*/http` (Gin handlers + DTOs) | Wiring/serialization over the already-tested service layer; better exercised end-to-end via the `testfrontend` Playwright suite, which drives real HTTP requests through real handlers. |
+| `internal/*/http` (chi handlers + DTOs) | Wiring/serialization over the already-tested service layer; better exercised end-to-end via the `testfrontend` Playwright suite, which drives real HTTP requests through real handlers. |
 | `internal/platform/config`, `internal/platform/db`, `internal/platform/httpserver/docs.go` | Environment/bootstrap glue (env var parsing, `sql.Open`, Swagger doc generation) with no branching logic worth unit-testing in isolation. |
 | `cmd/*`, `docs/`, `migrations/` | Entry points and generated/SQL artifacts, not unit-testable logic. |
 
@@ -66,7 +66,7 @@ JWT signing/parsing used by login and the auth middleware.
 - **Edge cases**: expired token (negative expiry), wrong secret, malformed tokens (empty string, non-JWT string, wrong segment count), a token signed with `alg: none` (must be rejected even though `token.Valid` would otherwise pass — the keyfunc explicitly checks for `*jwt.SigningMethodHMAC`), and confirming a failed parse always returns `uuid.Nil`.
 
 ### `internal/platform/middleware/auth_test.go`, `cors_test.go`, `recover_test.go`, `requestlog_test.go`
-The HTTP middleware chain (`net/http`, not Gin).
+The HTTP middleware chain (plain `net/http.Handler`, composed by chi).
 - **Auth**: missing header, non-Bearer schemes (including a case-sensitivity check and a missing-space malformed header), invalid token, expired token, and the success path (context carries the parsed user ID through to the next handler). `UserIDFromContext` absent/present, plus a documented guarantee that a colliding-but-different context key type can't spoof a user ID (the key type is unexported).
 - **CORS**: headers are set on normal requests; an `OPTIONS` preflight short-circuits with `204` and never reaches the wrapped handler.
 - **Recover**: a panic (string or `error` value) is converted to a `500` JSON body instead of crashing the process; a non-panicking request passes through unchanged.
@@ -129,7 +129,7 @@ packages, i.e. the actual thing this task asked to test): **(100.0 + 93.9 +
 **Overall `go test ./... -cover` statement coverage across the entire
 module** (every package, including the intentionally-untested repository/
 http/config/db/cmd/docs/migrations layers): **41.4%** — low only because the
-denominator includes ~2,500 lines of GORM/Gin/bootstrap code this task
+denominator includes ~2,500 lines of GORM/chi/bootstrap code this task
 deliberately left to integration/E2E testing (see Scope above), not because
 service-layer logic is under-tested.
 

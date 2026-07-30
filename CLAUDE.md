@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Go backend (Gin + GORM + Postgres) that mimics the "Digital Salak" feature of GSB's MyMo mobile banking app: a user has multiple bank accounts (savings + a premium digital lottery-savings-bond product called "Salak"), and can buy Salak by transferring funds from a savings account into a Salak account, which mints a lottery holding with a sequential ticket-number range.
+A Go backend (chi + GORM + Postgres) that mimics the "Digital Salak" feature of GSB's MyMo mobile banking app: a user has multiple bank accounts (savings + a premium digital lottery-savings-bond product called "Salak"), and can buy Salak by transferring funds from a savings account into a Salak account, which mints a lottery holding with a sequential ticket-number range.
 
 It is a **modular monolith**: one Go module, one Postgres database, but each business domain owns its own Postgres schema (`"user"`, `account`, `salak`, `transaction`) and its own `internal/<domain>` package tree. Cross-domain calls happen in-process through Go interfaces, never HTTP.
 
@@ -40,7 +40,7 @@ internal/<domain>/
 ├── domain/             # package domain — plain structs, GORM TableName()
 ├── repository/         # package repository — GORM implementations of ports.go's Repository interface
 ├── service/            # package service — implements ports.go's Service interface
-└── http/                # package http — Gin handlers + DTOs, depends only on the Service interface
+└── http/                # package http — chi handlers + DTOs, depends only on the Service interface
 ```
 
 The domains are `user`, `account`, `salak`, `transaction`. **`account` and `salak` must never import `transaction`** — this is the load-bearing rule in this codebase; if you're adding a feature that seems to require `account` or `salak` to know about `transaction`, the orchestration belongs in `transaction` instead. Dependencies otherwise flow one way: `account` is a leaf (imports no sibling domain); `salak` depends on `account.Service` (e.g. `ListHoldingsByAccount` verifies account ownership via `accounts.GetByID` before returning holdings); `transaction` depends on both `account.Service` and `salak.Service`. All of these are `ports.go` interfaces injected at the composition root, never concrete repos/services from another domain's package.
