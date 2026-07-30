@@ -10,10 +10,10 @@ import (
 )
 
 type buySalakRequest struct {
-	FundingAccountID uuid.UUID       `json:"funding_account_id" binding:"required"`
-	SalakAccountID   uuid.UUID       `json:"salak_account_id" binding:"required"`
-	ProductID        uuid.UUID       `json:"product_id" binding:"required"`
-	Amount           decimal.Decimal `json:"amount" binding:"required"`
+	FundingAccountID uuid.UUID       `json:"funding_account_id" validate:"required"`
+	SalakAccountID   uuid.UUID       `json:"salak_account_id" validate:"required"`
+	ProductID        uuid.UUID       `json:"product_id" validate:"required"`
+	Amount           decimal.Decimal `json:"amount" validate:"required"`
 }
 
 type buySalakResponse struct {

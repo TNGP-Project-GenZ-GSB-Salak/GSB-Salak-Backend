@@ -4,9 +4,8 @@ import (
 	"net/http"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
-	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/middleware"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -18,58 +17,57 @@ func NewHandler(service salak.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/salak/products", h.ListProducts)
-	rg.GET("/salak/products/:id", h.GetProduct)
-	rg.GET("/salak/holdings", h.ListHoldings)
+func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Get("/salak/products", h.ListProducts)
+	r.Get("/salak/products/{id}", h.GetProduct)
+	r.Get("/salak/holdings", h.ListHoldings)
 }
 
-func (h *Handler) ListProducts(c *gin.Context) {
-	products, err := h.service.ListProducts(c.Request.Context())
+func (h *Handler) ListProducts(w http.ResponseWriter, r *http.Request) {
+	products, err := h.service.ListProducts(r.Context())
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusOK, toProductResponses(products))
+	httpserver.OK(w, http.StatusOK, toProductResponses(products))
 }
 
-func (h *Handler) GetProduct(c *gin.Context) {
-	productID, err := uuid.Parse(c.Param("id"))
+func (h *Handler) GetProduct(w http.ResponseWriter, r *http.Request) {
+	productID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid product id"})
+		httpserver.Error(w, http.StatusBadRequest, "invalid product id")
 		return
 	}
 
-	p, err := h.service.GetProduct(c.Request.Context(), productID)
+	p, err := h.service.GetProduct(r.Context(), productID)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusOK, toProductResponse(p))
+	httpserver.OK(w, http.StatusOK, toProductResponse(p))
 }
 
-func (h *Handler) ListHoldings(c *gin.Context) {
-	userID, ok := middleware.UserIDFromContext(c)
+func (h *Handler) ListHoldings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	accountID, err := uuid.Parse(c.Query("account_id"))
+	accountID, err := uuid.Parse(r.URL.Query().Get("account_id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "valid account_id query param is required"})
+		httpserver.Error(w, http.StatusBadRequest, "valid account_id query param is required")
 		return
 	}
 
-	holdings, err := h.service.ListHoldingsByAccount(c.Request.Context(), userID, accountID)
+	holdings, err := h.service.ListHoldingsByAccount(r.Context(), userID, accountID)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
 
-	products, err := h.service.ListProducts(c.Request.Context())
+	products, err := h.service.ListProducts(r.Context())
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
 	productNames := make(map[uuid.UUID]string, len(products))
@@ -77,5 +75,5 @@ func (h *Handler) ListHoldings(c *gin.Context) {
 		productNames[p.ID] = p.Name
 	}
 
-	httpserver.OK(c, http.StatusOK, toHoldingResponses(holdings, productNames))
+	httpserver.OK(w, http.StatusOK, toHoldingResponses(holdings, productNames))
 }

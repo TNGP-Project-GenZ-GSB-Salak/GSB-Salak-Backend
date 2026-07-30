@@ -5,8 +5,7 @@ import (
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
-	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/middleware"
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -18,43 +17,41 @@ func NewHandler(service account.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.GET("/accounts", h.ListMine)
-	rg.GET("/accounts/:id", h.GetByID)
+func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Get("/accounts", h.ListMine)
+	r.Get("/accounts/{id}", h.GetByID)
 }
 
-func (h *Handler) ListMine(c *gin.Context) {
-	userID, ok := middleware.UserIDFromContext(c)
+func (h *Handler) ListMine(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	accounts, err := h.service.ListByUser(c.Request.Context(), userID)
+	accounts, err := h.service.ListByUser(r.Context(), userID)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusOK, toAccountResponses(accounts))
+	httpserver.OK(w, http.StatusOK, toAccountResponses(accounts))
 }
 
-func (h *Handler) GetByID(c *gin.Context) {
-	userID, ok := middleware.UserIDFromContext(c)
+func (h *Handler) GetByID(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	accountID, err := uuid.Parse(c.Param("id"))
+	accountID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid account id"})
+		httpserver.Error(w, http.StatusBadRequest, "invalid account id")
 		return
 	}
 
-	a, err := h.service.GetByID(c.Request.Context(), userID, accountID)
+	a, err := h.service.GetByID(r.Context(), userID, accountID)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusOK, toAccountResponse(a))
+	httpserver.OK(w, http.StatusOK, toAccountResponse(a))
 }

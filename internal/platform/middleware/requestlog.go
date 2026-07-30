@@ -2,15 +2,19 @@ package middleware
 
 import (
 	"log"
+	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
-func RequestLog() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-		log.Printf("%s %s %d %s", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), time.Since(start))
+func RequestLog() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+			log.Printf("%s %s %d %s", r.Method, r.URL.Path, ww.Status(), time.Since(start))
+		})
 	}
 }

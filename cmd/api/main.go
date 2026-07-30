@@ -2,12 +2,15 @@ package main
 
 import (
 	"log"
+	"net/http"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/config"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/db"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/jwtutil"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/middleware"
+
+	"github.com/go-chi/chi/v5"
 
 	accounthttp "github.com/ciaabcdefg/gsb-salak-backend/internal/account/http"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
@@ -56,18 +59,20 @@ func main() {
 	transactionHandler := transactionhttp.NewHandler(buySalakService)
 
 	router := httpserver.NewRouter()
-	api := router.Group("/api/v1")
 
-	userHandler.RegisterRoutes(api)
+	router.Route("/api/v1", func(r chi.Router) {
+		userHandler.RegisterRoutes(r)
 
-	protected := api.Group("")
-	protected.Use(middleware.Auth(signer))
-	accountHandler.RegisterRoutes(protected)
-	salakHandler.RegisterRoutes(protected)
-	transactionHandler.RegisterRoutes(protected)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(signer))
+			accountHandler.RegisterRoutes(r)
+			salakHandler.RegisterRoutes(r)
+			transactionHandler.RegisterRoutes(r)
+		})
+	})
 
 	log.Printf("starting server on :%s", cfg.HTTPPort)
-	if err := router.Run(":" + cfg.HTTPPort); err != nil {
+	if err := http.ListenAndServe(":"+cfg.HTTPPort, router); err != nil {
 		log.Fatalf("server stopped: %v", err)
 	}
 }

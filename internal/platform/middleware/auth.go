@@ -1,39 +1,43 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/jwtutil"
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
-const UserIDKey = "userID"
+type ctxKey int
 
-func Auth(signer *jwtutil.Signer) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing bearer token"})
-			return
-		}
+const userIDKey ctxKey = iota
 
-		tokenString := strings.TrimPrefix(header, "Bearer ")
-		userID, err := signer.Parse(tokenString)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
-			return
-		}
+func Auth(signer *jwtutil.Signer) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if header == "" || !strings.HasPrefix(header, "Bearer ") {
+				writeJSONError(w, http.StatusUnauthorized, "missing bearer token")
+				return
+			}
 
-		c.Set(UserIDKey, userID)
-		c.Next()
+			tokenString := strings.TrimPrefix(header, "Bearer ")
+			userID, err := signer.Parse(tokenString)
+			if err != nil {
+				writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), userIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
 	}
 }
 
-func UserIDFromContext(c *gin.Context) (uuid.UUID, bool) {
-	v, ok := c.Get(UserIDKey)
-	if !ok {
+func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	v := ctx.Value(userIDKey)
+	if v == nil {
 		return uuid.Nil, false
 	}
 	id, ok := v.(uuid.UUID)

@@ -2,12 +2,14 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
-	"github.com/gin-gonic/gin"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/middleware"
+	"github.com/google/uuid"
 )
 
 // statusClientClosedRequest (nginx's 499 convention) is used when the
@@ -15,13 +17,23 @@ import (
 // reporting a request the client never actually failed to receive as a 500.
 const statusClientClosedRequest = 499
 
-func OK(c *gin.Context, code int, data any) {
-	c.JSON(code, gin.H{"data": data})
+func OK(w http.ResponseWriter, code int, data any) {
+	writeJSON(w, code, map[string]any{"data": data})
 }
 
-func Fail(c *gin.Context, err error) {
+func Error(w http.ResponseWriter, code int, message string) {
+	writeJSON(w, code, map[string]any{"error": message})
+}
+
+func writeJSON(w http.ResponseWriter, code int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(body)
+}
+
+func Fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) {
-		c.AbortWithStatus(statusClientClosedRequest)
+		w.WriteHeader(statusClientClosedRequest)
 		return
 	}
 
@@ -37,8 +49,19 @@ func Fail(c *gin.Context, err error) {
 	// error (with any wrapped cause) is logged server-side so 5xx responses
 	// are diagnosable instead of a bare status code in the access log.
 	if status >= http.StatusInternalServerError {
-		log.Printf("%s %s -> %d: %v", c.Request.Method, c.Request.URL.Path, status, err)
+		log.Printf("%s %s -> %d: %v", r.Method, r.URL.Path, status, err)
 	}
 
-	c.JSON(status, gin.H{"error": message})
+	Error(w, status, message)
+}
+
+// RequireUserID pulls the authenticated user id set by middleware.Auth out of
+// the request context, writing a 401 response itself when it's missing.
+func RequireUserID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		Error(w, http.StatusUnauthorized, "unauthorized")
+		return uuid.Nil, false
+	}
+	return userID, true
 }

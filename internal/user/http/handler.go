@@ -5,7 +5,7 @@ import (
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/user"
-	"github.com/gin-gonic/gin"
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -16,37 +16,37 @@ func NewHandler(service user.Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	rg.POST("/auth/register", h.Register)
-	rg.POST("/auth/login", h.Login)
+func (h *Handler) RegisterRoutes(r chi.Router) {
+	r.Post("/auth/register", h.Register)
+	r.Post("/auth/login", h.Login)
 }
 
-func (h *Handler) Register(c *gin.Context) {
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := httpserver.DecodeAndValidate(r, &req); err != nil {
+		httpserver.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	u, err := h.service.Register(c.Request.Context(), req.Username, req.Password, req.FullName)
+	u, err := h.service.Register(r.Context(), req.Username, req.Password, req.FullName)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusCreated, toUserResponse(u))
+	httpserver.OK(w, http.StatusCreated, toUserResponse(u))
 }
 
-func (h *Handler) Login(c *gin.Context) {
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := httpserver.DecodeAndValidate(r, &req); err != nil {
+		httpserver.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	u, token, err := h.service.Login(c.Request.Context(), req.Username, req.Password)
+	u, token, err := h.service.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
-		httpserver.Fail(c, err)
+		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(c, http.StatusOK, loginResponse{User: toUserResponse(u), Token: token})
+	httpserver.OK(w, http.StatusOK, loginResponse{User: toUserResponse(u), Token: token})
 }
