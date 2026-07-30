@@ -2,6 +2,8 @@
 
 A barebones vanilla HTML/CSS/JS frontend for the GSB Salak API, built to exercise the full user flow (register, login, view accounts, view Salak products, buy Salak, view transaction history) and to drive a Playwright test suite that screenshots each step and looks for bugs. CSS is layout-only — no colors, fonts, or other decoration.
 
+**Note:** this predates the real `GSB-Salak-Frontend` (a Vite + React SPA, which now has its own equivalent Playwright suite in `GSB-Salak-Frontend/tests/`). This still works and is still useful for backend-only smoke testing without a Node/Vite toolchain, but don't add new user-flow test cases here — add them against the real frontend instead.
+
 It's served by its own static file server on a different origin/port than the Go API, so the API has CORS middleware enabled (`internal/platform/middleware/cors.go`) to allow it.
 
 ## Setup
