@@ -47,7 +47,7 @@ func (h *Handler) BuySalak(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	receipt, err := h.service.BuySalak(r.Context(), userID, req.FundingAccountID, req.SalakAccountID, req.ProductID, req.Amount)
+	receipt, err := h.service.BuySalak(r.Context(), userID, req.FundingAccountID, req.SalakAccountID, req.ProductID, req.BadgeID, req.Amount)
 	if err != nil {
 		httpserver.Fail(w, r, err)
 		return

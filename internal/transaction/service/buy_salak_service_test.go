@@ -135,6 +135,21 @@ func (f *fakeLedgerRepo) FindByAccountID(ctx context.Context, accountID uuid.UUI
 	return f.findByAccountResult, nil
 }
 
+// fakeBadgeService is a hand-rolled implementation of badge.Service.
+type fakeBadgeService struct {
+	owns    bool
+	ownsErr error
+	called  bool
+}
+
+func (f *fakeBadgeService) UserOwnsBadge(ctx context.Context, userID, badgeID uuid.UUID) (bool, error) {
+	f.called = true
+	if f.ownsErr != nil {
+		return false, f.ownsErr
+	}
+	return f.owns, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {
@@ -194,9 +209,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 	t.Run("funding and salak account must differ", func(t *testing.T) {
 		accountID := uuid.New()
 		accounts := newFakeAccountService()
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, accountID, accountID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, accountID, accountID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 
@@ -204,9 +219,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		fundingID, salakID := uuid.New(), uuid.New()
 		accounts := newFakeAccountService()
 		accounts.getByIDErrs[fundingID] = apperror.NotFound("account not found")
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
 	})
 
@@ -214,9 +229,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		fundingID, salakID := uuid.New(), uuid.New()
 		accounts := newFakeAccountService()
 		accounts.accounts[fundingID] = salakAccount(fundingID) // wrong type on purpose
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 
@@ -225,9 +240,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[fundingID] = savingsAccount(fundingID)
 		accounts.getByIDErrs[salakID] = apperror.NotFound("account not found")
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
 	})
 
@@ -236,9 +251,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[fundingID] = savingsAccount(fundingID)
 		accounts.accounts[salakID] = savingsAccount(salakID) // wrong type on purpose
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 
@@ -248,9 +263,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		accounts.accounts[fundingID] = savingsAccount(fundingID)
 		accounts.accounts[salakID] = salakAccount(salakID)
 		salakSvc := &fakeSalakService{getProductErr: apperror.NotFound("salak product not found")}
-		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "100"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
 	})
 
@@ -263,9 +278,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 			getProductResult:    activeProduct(),
 			validatePurchaseErr: apperror.Validation("amount must be a multiple of the step amount"),
 		}
-		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), mustDecimal(t, "150"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "150"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 
@@ -286,14 +301,15 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		}
 		salakSvc := &fakeSalakService{getProductResult: product, mintHoldingResult: holding}
 		ledger := &fakeLedgerRepo{}
+		badgeSvc := &fakeBadgeService{owns: true}
 
 		db, mock := newSQLMockDB(t)
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewBuySalakService(db, accounts, salakSvc, ledger)
+		svc := service.NewBuySalakService(db, accounts, salakSvc, ledger, badgeSvc)
 
-		receipt, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, mustDecimal(t, "500"))
+		receipt, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		require.NoError(t, err)
 
 		assert.Equal(t, product.Name, receipt.ProductName)
@@ -314,7 +330,57 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		require.NotNil(t, debitEntry.HoldingID)
 		assert.Equal(t, holding.ID, *debitEntry.HoldingID)
 
+		assert.False(t, badgeSvc.called, "badge ownership must not be checked when no badge is supplied")
 		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("badge supplied and owned succeeds", func(t *testing.T) {
+		fundingID, salakID, productID, badgeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[fundingID] = savingsAccount(fundingID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+
+		salakSvc := &fakeSalakService{getProductResult: activeProduct(), mintHoldingResult: salakdomain.Holding{ID: uuid.New(), Units: 5}}
+		badgeSvc := &fakeBadgeService{owns: true}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{}, badgeSvc)
+
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, &badgeID, mustDecimal(t, "500"))
+		require.NoError(t, err)
+		assert.True(t, badgeSvc.called)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("badge supplied but not owned is rejected before any transaction opens", func(t *testing.T) {
+		fundingID, salakID, productID, badgeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[fundingID] = savingsAccount(fundingID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+
+		salakSvc := &fakeSalakService{getProductResult: activeProduct()}
+		badgeSvc := &fakeBadgeService{owns: false}
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, badgeSvc)
+
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, &badgeID, mustDecimal(t, "500"))
+		assertAppErrKind(t, err, apperror.KindForbidden)
+	})
+
+	t.Run("badge ownership check error returns internal error", func(t *testing.T) {
+		fundingID, salakID, productID, badgeID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[fundingID] = savingsAccount(fundingID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+
+		salakSvc := &fakeSalakService{getProductResult: activeProduct()}
+		badgeSvc := &fakeBadgeService{ownsErr: errors.New("db down")}
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, badgeSvc)
+
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, &badgeID, mustDecimal(t, "500"))
+		assertAppErrKind(t, err, apperror.KindInternal)
 	})
 
 	t.Run("debit failure rolls back and is propagated verbatim", func(t *testing.T) {
@@ -329,9 +395,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, mustDecimal(t, "500"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -350,9 +416,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, mustDecimal(t, "500"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		assertAppErrKind(t, err, apperror.KindInternal)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -372,9 +438,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(db, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, mustDecimal(t, "500"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		assert.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -394,9 +460,9 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewBuySalakService(db, accounts, salakSvc, ledger)
+		svc := service.NewBuySalakService(db, accounts, salakSvc, ledger, &fakeBadgeService{owns: true})
 
-		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, mustDecimal(t, "500"))
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		assert.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -413,7 +479,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		want := []domain.LedgerEntry{{ID: uuid.New(), AccountID: accountID}}
 		ledger := &fakeLedgerRepo{findByAccountResult: want}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		got, err := svc.ListHistory(context.Background(), userID, accountID, 10, 0)
 		require.NoError(t, err)
@@ -423,7 +489,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 	t.Run("ownership check failure is propagated verbatim", func(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.getByIDErrs[accountID] = apperror.NotFound("account not found")
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{})
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{owns: true})
 
 		_, err := svc.ListHistory(context.Background(), userID, accountID, 10, 0)
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -433,7 +499,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		ledger := &fakeLedgerRepo{}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		for _, limit := range []int{0, -1, -100} {
 			_, err := svc.ListHistory(context.Background(), userID, accountID, limit, 0)
@@ -446,7 +512,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		ledger := &fakeLedgerRepo{}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		_, err := svc.ListHistory(context.Background(), userID, accountID, 500, 0)
 		require.NoError(t, err)
@@ -457,7 +523,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		ledger := &fakeLedgerRepo{}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		_, err := svc.ListHistory(context.Background(), userID, accountID, 100, 0)
 		require.NoError(t, err)
@@ -468,7 +534,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		ledger := &fakeLedgerRepo{}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		_, err := svc.ListHistory(context.Background(), userID, accountID, 10, -5)
 		require.NoError(t, err)
@@ -479,7 +545,7 @@ func TestBuySalakService_ListHistory(t *testing.T) {
 		accounts := newFakeAccountService()
 		accounts.accounts[accountID] = savingsAccount(accountID)
 		ledger := &fakeLedgerRepo{findByAccountErr: errors.New("db down")}
-		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, ledger, &fakeBadgeService{owns: true})
 
 		_, err := svc.ListHistory(context.Background(), userID, accountID, 10, 0)
 		assertAppErrKind(t, err, apperror.KindInternal)

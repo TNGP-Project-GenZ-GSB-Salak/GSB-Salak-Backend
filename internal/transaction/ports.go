@@ -31,6 +31,8 @@ type BuySalakReceipt struct {
 
 // Service is the public surface the http layer depends on.
 type Service interface {
-	BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (BuySalakReceipt, error)
+	// badgeID is optional (nil means no badge supplied); when non-nil, the
+	// caller must own that badge or the purchase is rejected.
+	BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, badgeID *uuid.UUID, amount decimal.Decimal) (BuySalakReceipt, error)
 	ListHistory(ctx context.Context, userID, accountID uuid.UUID, limit, offset int) ([]domain.LedgerEntry, error)
 }
