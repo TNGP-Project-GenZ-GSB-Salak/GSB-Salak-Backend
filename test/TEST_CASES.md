@@ -1,6 +1,6 @@
 # Detailed unit test case reference
 
-This is the granular companion to `test/UNIT.md`: **137 rows**, one per individual test
+This is the granular companion to `test/UNIT.md`: **151 rows**, one per individual test
 scenario (every table-driven `t.Run` case counted separately, not just its parent
 function), in a `Prerequisites / Expected / Actual` format. See `test/UNIT.md` for the high-level
 narrative — what's covered and why, per-package coverage percentages, and what's
@@ -196,15 +196,39 @@ Pure formatting/struct logic — no service or repo involved.
 | TX-05 | BuySalak: salak account must be salak-type | Both accounts exist, but the "salak" account has `Type=savings` (wrong type on purpose) | Returns `apperror.KindValidation` | ✅ Returns Validation error |
 | TX-06 | BuySalak: product lookup failure is propagated verbatim | Both accounts valid; fake `salak.Service.GetProduct` returns `apperror.NotFound(...)` | Returns that exact NotFound error | ✅ Returns NotFound, propagated verbatim |
 | TX-07 | BuySalak: purchase validation failure is propagated verbatim | Accounts + product valid; fake `salak.Service.ValidatePurchase` returns `apperror.Validation("amount must be a multiple of the step amount")` | Returns that exact Validation error | ✅ Returns Validation error, propagated verbatim |
-| TX-08 | BuySalak: success commits the transaction and returns a full receipt | Valid funding/salak accounts, valid product; `sqlmock`-backed `*gorm.DB` with `ExpectBegin()`/`ExpectCommit()` | Returns a receipt with correct product name/units/amount/both post-transaction balances/non-nil reference ID; exactly 2 ledger entries (debit+credit) sharing one `reference_id`, both carrying the minted holding's ID; `mock.ExpectationsWereMet()` passes | ✅ All receipt fields correct; ledger pairing verified; transaction genuinely committed (mock expectations met) |
-| TX-09 | BuySalak: debit failure rolls back and is propagated verbatim | Fake `account.Service.Debit` returns `apperror.Validation("insufficient funds")`; `sqlmock` expects `Begin()`→`Rollback()` | Returns that exact Validation error; mock confirms rollback occurred | ✅ Returns Validation error; `ExpectationsWereMet()` confirms rollback |
-| TX-10 | BuySalak: mint holding failure rolls back and is propagated verbatim | Fake `salak.Service.MintHolding` returns an Internal error (e.g. simulated ticket-lock timeout); `sqlmock` expects `Begin()`→`Rollback()` | Returns that Internal error; mock confirms rollback | ✅ Returns Internal error; rollback confirmed |
-| TX-11 | BuySalak: credit failure rolls back and is propagated verbatim | Fake `account.Service.Credit` returns a plain error; `sqlmock` expects `Begin()`→`Rollback()` | Returns an error; mock confirms rollback | ✅ Returns error; rollback confirmed |
-| TX-12 | BuySalak: ledger write failure rolls back the whole transaction | Fake `LedgerRepository.Create` returns a plain error (disk full); `sqlmock` expects `Begin()`→`Rollback()` | Returns an error; mock confirms the whole debit→mint→credit chain rolled back, not just the ledger write | ✅ Returns error; rollback confirmed even though 3 prior steps had already "succeeded" against the fakes |
-| TX-13 | ListHistory: success | Fake `account.Service.GetByID` succeeds; fake ledger repo returns a fixed list of entries | Returns that exact list of entries | ✅ Returns the entries |
-| TX-14 | ListHistory: ownership check failure is propagated verbatim | Fake `account.Service.GetByID` returns `apperror.NotFound(...)` | Returns that exact NotFound error | ✅ Returns NotFound, propagated verbatim |
-| TX-15 | ListHistory: non-positive limit defaults to 20 | `limit` passed as 0, -1, or -100 | Ledger repo is called with `limit=20` in every case | ✅ Repo called with `limit=20` for all three inputs |
-| TX-16 | ListHistory: limit above 100 is clamped to 100 | `limit=500` | Ledger repo is called with `limit=100` | ✅ Repo called with `limit=100` |
-| TX-17 | ListHistory: limit exactly at the 100 boundary is not clamped | `limit=100` | Ledger repo is called with `limit=100` (unchanged) | ✅ Repo called with `limit=100` — off-by-one guard confirmed |
-| TX-18 | ListHistory: negative offset is clamped to 0 | `offset=-5` | Ledger repo is called with `offset=0` | ✅ Repo called with `offset=0` |
-| TX-19 | ListHistory: repo error returns internal error | Fake ledger repo's `FindByAccountID` returns `errors.New("db down")` | Returns `apperror.KindInternal` | ✅ Returns Internal error |
+| TX-08 | BuySalak: success commits the transaction and returns a full receipt | Valid funding/salak accounts, valid product, no badge supplied (`badgeID=nil`); `sqlmock`-backed `*gorm.DB` with `ExpectBegin()`/`ExpectCommit()` | Returns a receipt with correct product name/units/amount/both post-transaction balances/non-nil reference ID; exactly 2 ledger entries (debit+credit) sharing one `reference_id`, both carrying the minted holding's ID; fake `badge.Service.UserOwnsBadge` is never called since no badge was supplied; `mock.ExpectationsWereMet()` passes | ✅ All receipt fields correct; ledger pairing verified; `badgeSvc.called` confirmed false; transaction genuinely committed (mock expectations met) |
+| TX-09 | BuySalak: badge supplied and owned succeeds | Funding/salak accounts + product valid; a `badgeID` is supplied; fake `badge.Service.UserOwnsBadge` returns `owns: true`; `sqlmock`-backed `*gorm.DB` with `ExpectBegin()`/`ExpectCommit()` | Purchase succeeds exactly like the no-badge case; fake `badge.Service.UserOwnsBadge` was called; `mock.ExpectationsWereMet()` passes | ✅ Succeeds, `badgeSvc.called` is true, `ExpectationsWereMet()` confirms commit |
+| TX-10 | BuySalak: badge supplied but not owned is rejected before any transaction opens | A `badgeID` is supplied; fake `badge.Service.UserOwnsBadge` returns `owns: false`; `db` passed as `nil` (no `sqlmock` expectations needed) | Returns `apperror.KindForbidden`; no DB transaction is ever opened | ✅ Returns Forbidden error |
+| TX-11 | BuySalak: badge ownership check error returns internal error | A `badgeID` is supplied; fake `badge.Service.UserOwnsBadge` returns `errors.New("db down")` | Returns `apperror.KindInternal` | ✅ Returns Internal error |
+| TX-12 | BuySalak: debit failure rolls back and is propagated verbatim | Fake `account.Service.Debit` returns `apperror.Validation("insufficient funds")`; `sqlmock` expects `Begin()`→`Rollback()` | Returns that exact Validation error; mock confirms rollback occurred | ✅ Returns Validation error; `ExpectationsWereMet()` confirms rollback |
+| TX-13 | BuySalak: mint holding failure rolls back and is propagated verbatim | Fake `salak.Service.MintHolding` returns an Internal error (e.g. simulated ticket-lock timeout); `sqlmock` expects `Begin()`→`Rollback()` | Returns that Internal error; mock confirms rollback | ✅ Returns Internal error; rollback confirmed |
+| TX-14 | BuySalak: credit failure rolls back and is propagated verbatim | Fake `account.Service.Credit` returns a plain error; `sqlmock` expects `Begin()`→`Rollback()` | Returns an error; mock confirms rollback | ✅ Returns error; rollback confirmed |
+| TX-15 | BuySalak: ledger write failure rolls back the whole transaction | Fake `LedgerRepository.Create` returns a plain error (disk full); `sqlmock` expects `Begin()`→`Rollback()` | Returns an error; mock confirms the whole debit→mint→credit chain rolled back, not just the ledger write | ✅ Returns error; rollback confirmed even though 3 prior steps had already "succeeded" against the fakes |
+| TX-16 | ListHistory: success | Fake `account.Service.GetByID` succeeds; fake ledger repo returns a fixed list of entries | Returns that exact list of entries | ✅ Returns the entries |
+| TX-17 | ListHistory: ownership check failure is propagated verbatim | Fake `account.Service.GetByID` returns `apperror.NotFound(...)` | Returns that exact NotFound error | ✅ Returns NotFound, propagated verbatim |
+| TX-18 | ListHistory: non-positive limit defaults to 20 | `limit` passed as 0, -1, or -100 | Ledger repo is called with `limit=20` in every case | ✅ Repo called with `limit=20` for all three inputs |
+| TX-19 | ListHistory: limit above 100 is clamped to 100 | `limit=500` | Ledger repo is called with `limit=100` | ✅ Repo called with `limit=100` |
+| TX-20 | ListHistory: limit exactly at the 100 boundary is not clamped | `limit=100` | Ledger repo is called with `limit=100` (unchanged) | ✅ Repo called with `limit=100` — off-by-one guard confirmed |
+| TX-21 | ListHistory: negative offset is clamped to 0 | `offset=-5` | Ledger repo is called with `offset=0` | ✅ Repo called with `offset=0` |
+| TX-22 | ListHistory: repo error returns internal error | Fake ledger repo's `FindByAccountID` returns `errors.New("db down")` | Returns `apperror.KindInternal` | ✅ Returns Internal error |
+
+## 9. `internal/chooser/chooser_test.go`
+
+| ID | Test Case | Prerequisites | Expected | Actual |
+|---|---|---|---|---|
+| CHOOSER-01 | `NewChooser`: empty weights slice is rejected | `chooser.NewChooser(nil)` | Returns an error | ✅ Returns error |
+| CHOOSER-02 | `NewChooser`: a negative weight is rejected | `chooser.NewChooser([]float64{1, -0.5, 2})` | Returns an error | ✅ Returns error |
+| CHOOSER-03 | `NewChooser`: all-zero weights are rejected | `chooser.NewChooser([]float64{0, 0, 0})` | Returns an error | ✅ Returns error |
+| CHOOSER-04 | `Pick`: a single-weight chooser always picks index 0 | One weight (`{5}`); `rand.New(rand.NewPCG(1, 1))`; 100 draws | Every draw returns index `0` | ✅ All 100 draws return index 0 |
+| CHOOSER-05 | `Pick`: a zero-weight entry is never picked | Weights `{0, 1}` (valid since total > 0); `rand.New(rand.NewPCG(2, 2))`; 1000 draws | Every draw returns index `1`, never index `0` | ✅ All 1000 draws return index 1 |
+| CHOOSER-06 | `Pick`: distribution matches weights within tolerance | Weights `{0.5, 0.3, 0.2}`; `rand.New(rand.NewPCG(3, 3))`; 10,000 draws | Each index's draw count falls within ±5% of its weight's expected share of 10,000 | ✅ All three counts fall within tolerance |
+
+## 10. `internal/badge/service/random_badge_service_test.go`
+
+| ID | Test Case | Prerequisites | Expected | Actual |
+|---|---|---|---|---|
+| BADGESVC-01 | `NewWeightedRandomBadgeService`: empty badges slice is rejected | `service.NewWeightedRandomBadgeService(rand.New(rand.NewPCG(0, 0)), nil)` | Returns an error | ✅ Returns error |
+| BADGESVC-02 | `NewWeightedRandomBadgeService`: all-zero-weight badges are rejected | Two badges, both `Weight: 0` | Returns an error | ✅ Returns error |
+| BADGESVC-03 | `NewWeightedRandomBadgeService`: a negative-weight badge is rejected | Two badges, one with `Weight: -1` | Returns an error | ✅ Returns error |
+| BADGESVC-04 | `GetRandomBadge`: valid badge | Service constructed with 3 fixed badges (weights 0.5/0.3/0.2) | Returns one of the 3 configured badges, no error | ✅ Returns a badge contained in the configured set |
+| BADGESVC-05 | `GetRandomBadge`: distribution matches weights within tolerance | Same 3-badge/weight setup; 10,000 draws | Each badge's draw count falls within ±5% of its weight's expected share of 10,000 | ✅ All three counts fall within tolerance |
