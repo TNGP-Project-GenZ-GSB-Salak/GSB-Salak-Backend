@@ -38,3 +38,17 @@ type SalakBadge struct {
 func (SalakBadge) TableName() string {
 	return "badge.salak_badges"
 }
+
+// UserBadge is the record of a badge a user has acquired into their
+// collection. A user can hold at most one of each badge - enforced by a
+// UNIQUE(UserID, BadgeID) constraint at the DB level, not just here.
+type UserBadge struct {
+	ID         uuid.UUID
+	UserID     uuid.UUID
+	BadgeID    uuid.UUID
+	AcquiredAt time.Time
+}
+
+func (UserBadge) TableName() string {
+	return "badge.user_badges"
+}
