@@ -7,6 +7,7 @@ import (
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/badge"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
@@ -21,15 +22,16 @@ type BuySalakService struct {
 	accounts   account.Service
 	salakSvc   salak.Service
 	ledgerRepo transaction.LedgerRepository
+	badgeSvc   badge.Service
 }
 
-func NewBuySalakService(db *gorm.DB, accounts account.Service, salakSvc salak.Service, ledgerRepo transaction.LedgerRepository) *BuySalakService {
-	return &BuySalakService{db: db, accounts: accounts, salakSvc: salakSvc, ledgerRepo: ledgerRepo}
+func NewBuySalakService(db *gorm.DB, accounts account.Service, salakSvc salak.Service, ledgerRepo transaction.LedgerRepository, badgeSvc badge.Service) *BuySalakService {
+	return &BuySalakService{db: db, accounts: accounts, salakSvc: salakSvc, ledgerRepo: ledgerRepo, badgeSvc: badgeSvc}
 }
 
 var _ transaction.Service = (*BuySalakService)(nil)
 
-func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
+func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, badgeID *uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
 	if fundingAccountID == salakAccountID {
 		return transaction.BuySalakReceipt{}, apperror.Validation("funding account and salak account must be different")
 	}
@@ -56,6 +58,16 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 	}
 	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
 		return transaction.BuySalakReceipt{}, err
+	}
+
+	if badgeID != nil {
+		owns, err := s.badgeSvc.UserOwnsBadge(ctx, userID, *badgeID)
+		if err != nil {
+			return transaction.BuySalakReceipt{}, apperror.Internal("failed to check badge ownership", err)
+		}
+		if !owns {
+			return transaction.BuySalakReceipt{}, apperror.Forbidden("you do not own the specified badge")
+		}
 	}
 
 	var receipt transaction.BuySalakReceipt

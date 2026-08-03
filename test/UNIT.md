@@ -106,9 +106,20 @@ Pure formatting/struct logic, no service involved.
 ### `internal/transaction/service/buy_salak_service_test.go`
 `BuySalakService` — the cross-domain orchestration that debits, mints, credits, and ledgers atomically. This is the most complex unit under test since it's the one place a real `*gorm.DB` transaction envelope is involved (see sqlmock note above).
 - **Pre-transaction validation** (no DB transaction opened at all for these): funding account == salak account is rejected; a funding/salak account lookup failure is propagated verbatim; the funding account must be `savings`-type and the salak account must be `salak`-type (each checked with the *other* type on purpose); a product lookup failure and a `ValidatePurchase` failure both propagate verbatim.
-- **Success path**: `mock.ExpectBegin()` → `ExpectCommit()`; asserts the full receipt (product name, units, amount, both post-transaction balances, a non-nil reference ID), that exactly two ledger entries were written (one `debit` on the funding account, one `credit` on the salak account), that **both entries share one `reference_id`** (the pairing invariant the whole ledger design depends on), and that the holding ID is attached to both entries.
+- **Success path**: `mock.ExpectBegin()` → `ExpectCommit()`; asserts the full receipt (product name, units, amount, both post-transaction balances, a non-nil reference ID), that exactly two ledger entries were written (one `debit` on the funding account, one `credit` on the salak account), that **both entries share one `reference_id`** (the pairing invariant the whole ledger design depends on), that the holding ID is attached to both entries, and that the fake `badge.Service` was never called since no badge was supplied.
+- **Badge-ownership gate** (`badgeID *uuid.UUID`, optional): when supplied and owned, the purchase proceeds exactly as the no-badge case, and `badge.Service.UserOwnsBadge` is confirmed called; when supplied but not owned, the purchase is rejected with `apperror.KindForbidden` **before any DB transaction opens** (no `sqlmock` expectations needed — the fake `db` is `nil`); an error from the ownership check itself (not a "not owned" result) maps to `apperror.KindInternal`. When `badgeID` is `nil`, behavior is byte-for-byte identical to before this gate existed.
 - **Rollback paths**, one per failure point inside the transaction, each asserting `ExpectBegin()` → `ExpectRollback()` and that the original error is propagated: debit failure (insufficient funds), mint-holding failure (ticket reservation lock timeout), credit failure, and ledger-write failure (the last op in the transaction — confirms a late failure still rolls back the earlier debit/mint/credit, not just fails silently).
 - **ListHistory**: ownership-check-failure propagation; non-positive limit (`0`, `-1`, `-100`) defaults to 20; limit above 100 clamps to 100; **limit exactly at the 100 boundary is not clamped** (off-by-one guard); negative offset clamps to 0; repo error → `Internal`.
+
+### `internal/chooser/chooser_test.go`
+`Chooser` — a generic weighted-random-index picker (`math/rand/v2`-based) that both `WeightedRandomBadgeService` (below) and, in principle, any future weighted-pick need can share.
+- **Construction validation**: an empty weights slice, a negative weight, and all-zero weights are all rejected (a mix of zero and positive weights is valid, since the total is still > 0).
+- **`Pick`**: a single-weight chooser always returns index 0; an entry with zero weight is never picked even when mixed with a positive-weight entry (1,000 draws); and a 3-way weight split (0.5/0.3/0.2) produces a 10,000-draw distribution within ±5% of each expected share — a statistical check, not an exact one, since the picker is genuinely randomized.
+
+### `internal/badge/service/random_badge_service_test.go`
+Two services live in this package: `WeightedRandomBadgeService` (fully unit-tested here) and the thin `BadgeService` ownership-check pass-through consumed by the transaction badge gate above (**not** directly unit-tested — see the coverage gap noted below; its behavior is exercised indirectly through `buy_salak_service_test.go`'s fake and the real integration test).
+- **Construction validation**: mirrors `chooser`'s rules through `NewWeightedRandomBadgeService` — empty badges slice, all-zero-weight badges, and a negative-weight badge are all rejected.
+- **`GetRandomBadge`**: returns one of the configured badges; a 3-badge/weight (0.5/0.3/0.2) distribution check over 10,000 draws stays within ±5% of each badge's expected share, same statistical style as the chooser test.
 
 ## Coverage summary
 
@@ -121,19 +132,21 @@ out-of-scope per the table above, not gaps.
 | Platform | `internal/platform/apperror` | 100.0% | |
 | Platform | `internal/platform/jwtutil` | 100.0% | |
 | Platform | `internal/platform/middleware` | 100.0% | |
+| Platform | `internal/chooser` | 100.0% | |
 | User | `internal/user/service` | 93.9% | Gaps are `bcrypt.GenerateFromPassword` and `signer.Sign` error branches — practically unreachable without fault-injecting those libraries. |
 | Account | `internal/account/service` | 100.0% | |
 | Salak | `internal/salak/domain` | 100.0% | |
 | Salak | `internal/salak/service` | 96.2% | Gap is the `crypto/rand.Int` failure branch inside `randomTicketLetter` — unreachable without a fake entropy source. |
-| Transaction | `internal/transaction/service` | 98.2% | Same `crypto/rand` branch, reached transitively through `MintHolding`. |
+| Transaction | `internal/transaction/service` | 98.4% | Same `crypto/rand` branch, reached transitively through `MintHolding`. |
+| Badge | `internal/badge/service` | 84.6% | `WeightedRandomBadgeService` is 100% covered; the gap is entirely `BadgeService.NewBadgeService`/`UserOwnsBadge` (the thin ownership-check pass-through used by the transaction badge gate) — it has no direct unit test yet, only indirect exercise via `buy_salak_service_test.go`'s fake and `test/integration/buy_salak_flow_test.go`'s real-Postgres path. |
 
-**Per-domain business-logic average** (the four `internal/<domain>/service`
+**Per-domain business-logic average** (the five `internal/<domain>/service`
 packages, i.e. the actual thing this task asked to test): **(100.0 + 93.9 +
-96.2 + 98.2) / 4 ≈ 97.1%**.
+96.2 + 98.4 + 84.6) / 5 ≈ 94.6%**.
 
 **Overall `go test ./... -cover` statement coverage across the entire
 module** (every package, including the intentionally-untested repository/
-http/config/db/cmd/docs/migrations layers): **41.4%** — low only because the
+http/config/db/cmd/docs/migrations layers): **43.5%** — low only because the
 denominator includes ~2,500 lines of GORM/chi/bootstrap code this task
 deliberately left to integration/E2E testing (see Scope above), not because
 service-layer logic is under-tested.
@@ -148,5 +161,5 @@ go build ./... && go vet ./... && gofmt -l .   # sanity-check alongside tests
 ```
 
 All of the above are clean as of this writing: `go build`, `go vet`, and
-`gofmt -l .` report nothing, and every test passes (159 passing test cases —
-top-level tests plus table-driven subtests — across 12 new `_test.go` files).
+`gofmt -l .` report nothing, and every test passes (174 passing test cases —
+top-level tests plus table-driven subtests — across 14 `_test.go` files).

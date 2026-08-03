@@ -9,6 +9,9 @@ import (
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
 	accountservice "github.com/ciaabcdefg/gsb-salak-backend/internal/account/service"
+	badgerepo "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/repository"
+	badgeservice "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
@@ -38,7 +41,8 @@ func newBuySalakService(tx *gorm.DB) (*txservice.BuySalakService, *accountrepo.G
 		accountSvc,
 	)
 	ledgerRepository := txrepo.NewGormLedgerRepository(tx)
-	return txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepository), accountRepository
+	badgeSvc := badgeservice.NewBadgeService(badgerepo.NewGormBadgeRepository(tx))
+	return txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepository, badgeSvc), accountRepository
 }
 
 func TestBuySalakFlow_HappyPath_DebitsCreditsMintsAndLedgers(t *testing.T) {
@@ -52,7 +56,7 @@ func TestBuySalakFlow_HappyPath_DebitsCreditsMintsAndLedgers(t *testing.T) {
 
 	buySvc, accountRepository := newBuySalakService(tx)
 
-	receipt, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, decimal.RequireFromString("2000"))
+	receipt, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, nil, decimal.RequireFromString("2000"))
 	require.NoError(t, err)
 
 	assert.EqualValues(t, 20, receipt.Units) // 2000 / 100 unit price
@@ -114,7 +118,7 @@ func TestBuySalakFlow_MidTransactionFailure_RollsBackEverything(t *testing.T) {
 
 	buySvc, accountRepository := newBuySalakService(tx)
 
-	_, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, decimal.RequireFromString("2000"))
+	_, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, nil, decimal.RequireFromString("2000"))
 	require.Error(t, err)
 
 	gotFunding, findErr := accountRepository.FindByID(ctx, funding.ID)
@@ -132,4 +136,56 @@ func TestBuySalakFlow_MidTransactionFailure_RollsBackEverything(t *testing.T) {
 	entries, findErr := txrepo.NewGormLedgerRepository(tx).FindByAccountID(ctx, funding.ID, 10, 0)
 	require.NoError(t, findErr)
 	assert.Empty(t, entries, "no ledger entry should have been persisted")
+}
+
+// TestBuySalakFlow_BadgeSuppliedAndOwned_Succeeds proves the badge-ownership
+// gate's positive path against a real badge.user_badges row (not a fake),
+// confirming GormBadgeRepository.UserOwnsBadge actually finds a real grant.
+func TestBuySalakFlow_BadgeSuppliedAndOwned_Succeeds(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+
+	user := mustCreateUser(t, tx, "")
+	funding := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	salakAccount := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+	badge := mustCreateBadge(t, tx, uniqueProductCode())
+	mustGrantUserBadge(t, tx, user.ID, badge.ID)
+
+	buySvc, _ := newBuySalakService(tx)
+
+	_, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, &badge.ID, decimal.RequireFromString("2000"))
+	require.NoError(t, err)
+}
+
+// TestBuySalakFlow_BadgeSuppliedButNotOwned_RejectsBeforeAnyStateChanges
+// proves the gate rejects real, existing badges the user was never granted -
+// asserting (same style as the mid-transaction-failure test above) that
+// nothing changed, since this rejection happens even earlier, before the
+// transaction is ever opened.
+func TestBuySalakFlow_BadgeSuppliedButNotOwned_RejectsBeforeAnyStateChanges(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+
+	user := mustCreateUser(t, tx, "")
+	funding := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	salakAccount := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+	badge := mustCreateBadge(t, tx, uniqueProductCode()) // real badge, never granted to this user
+
+	buySvc, accountRepository := newBuySalakService(tx)
+
+	_, err := buySvc.BuySalak(ctx, user.ID, funding.ID, salakAccount.ID, product.ID, &badge.ID, decimal.RequireFromString("2000"))
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, apperror.KindForbidden, appErr.Kind)
+
+	gotFunding, findErr := accountRepository.FindByID(ctx, funding.ID)
+	require.NoError(t, findErr)
+	assert.True(t, decimal.RequireFromString("10000").Equal(gotFunding.Balance), "rejected before any debit could happen")
+
+	holdings, findErr := salakrepo.NewGormHoldingRepository(tx).FindByAccountID(ctx, salakAccount.ID)
+	require.NoError(t, findErr)
+	assert.Empty(t, holdings, "no holding should have been persisted")
 }

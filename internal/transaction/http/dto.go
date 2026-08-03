@@ -13,6 +13,7 @@ type buySalakRequest struct {
 	FundingAccountID uuid.UUID       `json:"funding_account_id" validate:"required"`
 	SalakAccountID   uuid.UUID       `json:"salak_account_id" validate:"required"`
 	ProductID        uuid.UUID       `json:"product_id" validate:"required"`
+	BadgeID          *uuid.UUID      `json:"badge_id,omitempty"`
 	Amount           decimal.Decimal `json:"amount" validate:"required"`
 }
 
