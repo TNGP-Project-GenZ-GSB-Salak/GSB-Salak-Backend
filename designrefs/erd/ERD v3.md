@@ -88,8 +88,9 @@ SalakProduct {
 //   - deposit: money into Kapook (debits SavingsAccountID, credits
 //     KapookAccountID). Produces a debit+credit LedgerEntry pair sharing
 //     one ReferenceID, like BuySalak's pair. SavingsAccountID is chosen
-//     per-transaction, not a durable link (there is no Kapook-to-savings
-//     connection table — any of the user's savings accounts can be used).
+//     per-transaction — any of the user's savings accounts can be used,
+//     not just the KapookProxyAccount default (that default is scoped
+//     specifically to buy_salak's fundingAccountID requirement, below).
 //   - withdraw: money out of Kapook, no fee. Capped at 2 per calendar year,
 //     enforced at withdrawal time by counting existing Type='withdraw' rows
 //     for the account within the current calendar year — no separate
@@ -104,24 +105,27 @@ SalakProduct {
 //     The actual salak.holdings row and its own LedgerEntry debit/credit
 //     pair (reference_type='buy_salak') come from the existing BuySalak
 //     flow, which this triggers; this row does NOT produce a second ledger
-//     pair of its own. Sets HoldingID (the holding just minted) and
-//     PayoutAccountID (the savings account the user chose to receive this
-//     holding's value at expiration — must belong to the same user and be
-//     savings-type; independent of SavingsAccountID, since the user can
-//     choose a different account for payout than the one that funded the
-//     purchase).
+//     pair of its own. Funds conceptually come from Kapook (KapookGoal.
+//     SavingAmount), but BuySalak's fundingAccountID must be savings-type
+//     (a kapook-type account fails its existing type validation) — so this
+//     call passes a savings account as fundingAccountID (SavingsAccountID
+//     on this row, defaulting to KapookProxyAccount's SavingsAccountID
+//     unless the user picks a different one for this specific purchase).
+//     Recording it as the funding account is deliberate, not just a type
+//     workaround: it's also where the salak value + interest is credited
+//     back on salak_expiration below — there is no separate payout-account
+//     choice.
 //   - salak_expiration: Salak bought with Kapook money expires, decreasing
 //     KapookGoal.SalakAmount by this transaction's Amount. Sets HoldingID
 //     (the holding that expired, used to look up its buy_salak row's
-//     PayoutAccountID) and produces a LedgerEntry credit into that
-//     PayoutAccountID — this is not a forfeiture. The "interest if matured"
-//     portion of Amount is computed from a backend-code constant rate, not
-//     a database column (see SalakProduct's note above).
-// KapookAccountID/SavingsAccountID/PayoutAccountID are all qualified names
-// (not a bare AccountID) because this table references three distinct
-// Account roles in a single row — unlike Holding/LedgerEntry/KapookGoal,
-// which each reference exactly one, so a bare AccountID there is already
-// unambiguous.
+//     SavingsAccountID) and produces a LedgerEntry credit into that same
+//     SavingsAccountID — this is not a forfeiture. The "interest if
+//     matured" portion of Amount is computed from a backend-code constant
+//     rate, not a database column (see SalakProduct's note above).
+// KapookAccountID/SavingsAccountID are qualified names (not a bare
+// AccountID) because this table references two distinct Account roles in
+// a single row — unlike Holding/LedgerEntry/KapookGoal, which each
+// reference exactly one, so a bare AccountID there is already unambiguous.
 KapookTransaction {
 	ID uuid pk
 	Type string
@@ -129,9 +133,33 @@ KapookTransaction {
 	KapookAccountID uuid > Account.ID
 	SavingsAccountID uuid > Account.ID
 	HoldingID uuid > Holding.ID
-	PayoutAccountID uuid > Account.ID
 	CreatedAt timestamp
 	UpdatedAt timestamp
+}
+
+// A default savings account, chosen once when the Kapook account is
+// created, used as the default fundingAccountID (see the buy_salak bullet
+// above) when a buy_salak KapookTransaction triggers the real BuySalak
+// flow — BuySalak requires a savings-type funding account, and a
+// kapook-type account can't be passed directly. Because Account mirrors
+// the legacy core-banking system and can't be altered with a new column,
+// this link lives in its own table, same reasoning as the removed
+// KapookAccountConnection.
+// UNIQUE(KapookAccountID): one default proxy account per Kapook account; a
+// savings account may still serve as the proxy for more than one Kapook
+// account.
+// UNRESOLVED: BuySalak's existing, already-shipped implementation actually
+// debits whatever fundingAccountID it's given. Since funds here are
+// conceptually from KapookGoal.SavingAmount rather than the proxy
+// account's own balance, some mechanism (e.g. an internal top-up transfer
+// into SavingsAccountID immediately before calling BuySalak) is needed so
+// the debit doesn't silently draw down the user's real savings balance.
+// Not yet designed.
+KapookProxyAccount {
+	ID uuid pk
+	KapookAccountID uuid > Account.ID
+	SavingsAccountID uuid > Account.ID
+	CreatedAt timestamp
 }
 
 // KapookGoal is a goal our own domain tracks — unlike Account (a real
