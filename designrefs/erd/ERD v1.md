@@ -1,4 +1,4 @@
-Users {
+User {
 	ID uuid pk
 	Username string
 	Fullname string
@@ -9,7 +9,7 @@ Users {
 
 Account {
 	ID uuid pk
-	UserID uuid > Users.ID
+	UserID uuid > User.ID
 	AccountNumber string
 	Type string
 	Balance decimal
@@ -87,7 +87,7 @@ SavingKapook {
 
 AcceptTermCondition {
 	ID uuid
-	UserID uuid > Users.ID
+	UserID uuid > User.ID
 	AcceptDate timestamp
 	CreatedAt timestamp
 	UpdatedAt timestamp
@@ -96,7 +96,7 @@ AcceptTermCondition {
 Badge {
 	BadgeID uuid pk
 	ImageURL string
-	CollectionID uuid > BadgeCategories.BadgeCategoriesID
+	CollectionID uuid > BadgeCategory.BadgeCategoryID
 	CreatedAt timestamp
 	UpdatedAt timestamp
 }
@@ -109,19 +109,19 @@ HoldingBadge {
 }
 
 UserBadge {
-	UserID uuid > Users.ID
+	UserID uuid > User.ID
 	BadgeID uuid > Badge.BadgeID
 }
 
 UserDefaultBadge {
-	UserID uuid > Users.ID
+	UserID uuid > User.ID
 	BadgeID uuid > Badge.BadgeID
 }
 
-BadgeCategories {
+BadgeCategory {
 	Name string
 	CreatedAt timestamp
 	UpdatedAt timestamp
-	BadgeCategoriesID uuid pk
+	BadgeCategoryID uuid pk
 }
 
