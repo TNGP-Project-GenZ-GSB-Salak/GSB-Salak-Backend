@@ -65,8 +65,16 @@ SalakProduct {
 	UpdatedAt timestamp
 }
 
+// Type distinguishes 'deposit' vs 'withdrawal'. IsPremature is set only on a
+// withdrawal taken before the Kapook goal/maturity is reached. The 2-per-
+// calendar-year premature-withdrawal limit is enforced at withdrawal time by
+// counting existing rows for the account (Type='withdrawal' AND
+// IsPremature=true AND CreatedAt in the current calendar year) — no separate
+// counter table, so there's nothing to keep in sync with this history.
 TransactionSavingKapook {
 	State string
+	Type string
+	IsPremature boolean
 	Amount decimal
 	UpdatedAt timestamp
 	CreatedAt timestamp
