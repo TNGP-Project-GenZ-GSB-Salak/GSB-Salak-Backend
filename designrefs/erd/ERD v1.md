@@ -1,0 +1,127 @@
+Users {
+	ID uuid pk
+	Username string
+	Fullname string
+	CreatedAt timestamp
+	UpdatedAt timestamp
+	PasswordHash string
+}
+
+Account {
+	ID uuid pk
+	UserID uuid > Users.ID
+	AccountNumber string
+	Type string
+	Balance decimal
+	Currency string
+	CreatedAt timestamp
+	UpdatedAt timestamp
+}
+
+Holding {
+	AccountID uuid > Account.ID
+	ProductID uuid > SalakProduct.ID
+	Units int
+	TicketLetter string
+	TicketEnd int
+	PurchaseAmount decimal
+	PurchaseDate timestamp
+	MaturityDate timestamp
+	CreatedAt timestamp
+	ID uuid pk
+	TicketStart int
+}
+
+LedgerEntry {
+	AccountID uuid > Account.ID
+	HoldingID uuid > Holding.ID
+	Type string
+	Amount decimal
+	BalanceAfter decimal
+	ReferenceType string
+	ReferenceID uuid
+	Description string
+	CreatedAt timestamp
+	ID uuid pk
+}
+
+TicketSequence {
+	ID int pk
+	NextTicketNumber int
+	UpdatedAt timestamp
+}
+
+SalakProduct {
+	ID uuid pk
+	Code string
+	Name string
+	TermMonths int
+	UnitPrice decimal
+	MinPurchase decimal
+	MaxPurchase decimal
+	StepAmount decimal
+	IsActive bool
+	CreatedAt timestamp
+	UpdatedAt timestamp
+}
+
+TransactionSavingKapook {
+	State string
+	Amount decimal
+	UpdatedAt timestamp
+	CreatedAt timestamp
+	KapookAccountID uuid > Account.ID
+	SourceAccountID uuid > Account.ID
+	TranSavingID uuid pk
+}
+
+SavingKapook {
+	KapookID uuid
+	GoalAmount decimal
+	SavingAmount decimal
+	AccountID uuid > Account.ID
+	Stat integer
+	Status boolean
+	SalakAmount decimal
+}
+
+AcceptTermCondition {
+	ID uuid
+	UserID uuid > Users.ID
+	AcceptDate timestamp
+	CreatedAt timestamp
+	UpdatedAt timestamp
+}
+
+Badge {
+	BadgeID uuid pk
+	ImageURL string
+	CollectionID uuid > BadgeCategories.BadgeCategoriesID
+	CreatedAt timestamp
+	UpdatedAt timestamp
+}
+
+HoldingBadge {
+	CreatedAt timestamp
+	UpdatedAt timestamp
+	HoldingID uuid > Holding.ID
+	BadgeID uuid > Badge.BadgeID
+}
+
+UserBadge {
+	UserID uuid > Users.ID
+	BadgeID uuid > Badge.BadgeID
+}
+
+UserDefaultBadge {
+	UserID uuid > Users.ID
+	BadgeID uuid > Badge.BadgeID
+}
+
+BadgeCategories {
+	Name string
+	CreatedAt timestamp
+	UpdatedAt timestamp
+	BadgeCategoriesID uuid pk
+}
+
