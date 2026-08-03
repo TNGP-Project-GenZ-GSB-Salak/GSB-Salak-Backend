@@ -1,7 +1,7 @@
 User {
 	ID uuid pk
 	Username string
-	Fullname string
+	FullName string
 	CreatedAt timestamp
 	UpdatedAt timestamp
 	PasswordHash string
@@ -24,28 +24,29 @@ Account {
 }
 
 Holding {
+	ID uuid pk
 	AccountID uuid > Account.ID
 	ProductID uuid > SalakProduct.ID
 	Units int
-	TicketLetter string
+	TicketStart int
 	TicketEnd int
+	TicketLetter string
 	PurchaseAmount decimal
 	PurchaseDate timestamp
 	MaturityDate timestamp
 	CreatedAt timestamp
-	ID uuid pk
-	TicketStart int
 }
 
 // Type: 'debit' | 'credit'.
-// ReferenceType: 'buy_salak' | 'saving_kapook'. ReferenceID is a bare,
+// ReferenceType: 'buy_salak' | 'kapook_transaction'. ReferenceID is a bare,
 // polymorphic uuid with no FK constraint by design — it points at whichever
 // table ReferenceType names (salak.holdings' companion is HoldingID above;
-// TransactionSavingKapook's companion is its own ID, looked up via
-// ReferenceID + ReferenceType='saving_kapook'). This column already ships
-// with no CHECK constraint restricting its values, so adding
-// 'saving_kapook' needs no production migration at all.
+// KapookTransaction's companion is its own ID, looked up via ReferenceID +
+// ReferenceType='kapook_transaction'). This column already ships with no
+// CHECK constraint restricting its values, so adding 'kapook_transaction'
+// needs no production migration at all.
 LedgerEntry {
+	ID uuid pk
 	AccountID uuid > Account.ID
 	HoldingID uuid > Holding.ID
 	Type string
@@ -55,7 +56,6 @@ LedgerEntry {
 	ReferenceID uuid
 	Description string
 	CreatedAt timestamp
-	ID uuid pk
 }
 
 TicketSequence {
@@ -65,7 +65,7 @@ TicketSequence {
 }
 
 // The maturity interest rate applied on a Kapook-funded holding's
-// expiration (see TransactionSavingKapook.salak_expiration below) is a real
+// expiration (see KapookTransaction.salak_expiration below) is a real
 // rate, but for MVP it's a backend-code constant, not a column here —
 // intentional, not an oversight. Revisit if per-product rates are ever
 // needed.
@@ -85,9 +85,11 @@ SalakProduct {
 
 // Type: 'deposit' | 'withdraw' | 'withdraw_with_fee' | 'buy_salak' |
 // 'salak_expiration'.
-//   - deposit: money into Kapook (debits SourceAccountID, credits
+//   - deposit: money into Kapook (debits SavingsAccountID, credits
 //     KapookAccountID). Produces a debit+credit LedgerEntry pair sharing
-//     one ReferenceID, like BuySalak's pair.
+//     one ReferenceID, like BuySalak's pair. SavingsAccountID is chosen
+//     per-transaction, not a durable link (there is no Kapook-to-savings
+//     connection table — any of the user's savings accounts can be used).
 //   - withdraw: money out of Kapook, no fee. Capped at 2 per calendar year,
 //     enforced at withdrawal time by counting existing Type='withdraw' rows
 //     for the account within the current calendar year — no separate
@@ -97,42 +99,48 @@ SalakProduct {
 //     used up. Amount is the pre-fee amount; the 2% fee is derived at read
 //     time (Amount * 0.02), not stored as its own field. Produces a
 //     debit+credit LedgerEntry pair.
-//   - buy_salak: Kapook-side bookkeeping — increases SavingKapook.SalakAmount
-//     (see SavingKapook below for the goal deactivation rule this
-//     triggers). The actual salak.holdings row and its own LedgerEntry
-//     debit/credit pair (reference_type='buy_salak') come from the
-//     existing BuySalak flow, which this triggers; this row does NOT
-//     produce a second ledger pair of its own. Sets HoldingID (the holding
-//     just minted) and PayoutAccountID (the savings account the user chose
-//     to receive this holding's value at expiration — must belong to the
-//     same user and be savings-type; reopens the earlier "no HoldingID
-//     needed" call now that a per-holding payout destination has to be
-//     tracked somewhere).
+//   - buy_salak: Kapook-side bookkeeping — increases KapookGoal.SalakAmount
+//     (see KapookGoal below for the goal deactivation rule this triggers).
+//     The actual salak.holdings row and its own LedgerEntry debit/credit
+//     pair (reference_type='buy_salak') come from the existing BuySalak
+//     flow, which this triggers; this row does NOT produce a second ledger
+//     pair of its own. Sets HoldingID (the holding just minted) and
+//     PayoutAccountID (the savings account the user chose to receive this
+//     holding's value at expiration — must belong to the same user and be
+//     savings-type; independent of SavingsAccountID, since the user can
+//     choose a different account for payout than the one that funded the
+//     purchase).
 //   - salak_expiration: Salak bought with Kapook money expires, decreasing
-//     SavingKapook.SalakAmount by this transaction's Amount. Sets HoldingID
+//     KapookGoal.SalakAmount by this transaction's Amount. Sets HoldingID
 //     (the holding that expired, used to look up its buy_salak row's
 //     PayoutAccountID) and produces a LedgerEntry credit into that
 //     PayoutAccountID — this is not a forfeiture. The "interest if matured"
 //     portion of Amount is computed from a backend-code constant rate, not
 //     a database column (see SalakProduct's note above).
-TransactionSavingKapook {
+// KapookAccountID/SavingsAccountID/PayoutAccountID are all qualified names
+// (not a bare AccountID) because this table references three distinct
+// Account roles in a single row — unlike Holding/LedgerEntry/KapookGoal,
+// which each reference exactly one, so a bare AccountID there is already
+// unambiguous.
+KapookTransaction {
+	ID uuid pk
 	Type string
 	Amount decimal
-	UpdatedAt timestamp
-	CreatedAt timestamp
 	KapookAccountID uuid > Account.ID
-	SourceAccountID uuid > Account.ID
+	SavingsAccountID uuid > Account.ID
 	HoldingID uuid > Holding.ID
 	PayoutAccountID uuid > Account.ID
-	ID uuid pk
+	CreatedAt timestamp
+	UpdatedAt timestamp
 }
 
-// SavingKapook is a goal our own domain tracks — unlike Account (a real
+// KapookGoal is a goal our own domain tracks — unlike Account (a real
 // core-banking account), a single kapook-type Account can have many
-// SavingKapook rows over its life (one per goal set/reached/replaced), but
-// at most one may be active at a time: AccountID is NOT unique, enforce
-// instead via a partial unique index, UNIQUE(AccountID) WHERE Status.
-// Status: true = this is the account's current active goal. It flips to
+// KapookGoal rows over its life (one per goal set/reached/replaced), but at
+// most one may be active at a time: AccountID is NOT unique, enforce
+// instead via a partial unique index, UNIQUE(AccountID) WHERE IsActive.
+// IsActive: true = this is the account's current active goal (same
+// true/current-one meaning as SalakProduct.IsActive above). It flips to
 // false when a buy_salak transaction's Amount fully satisfies GoalAmount
 // (the goal is reached and entirely converted to Salak in one purchase) —
 // an earlier partial purchase (e.g. the user already has enough for
@@ -140,32 +148,18 @@ TransactionSavingKapook {
 // NOT deactivate the goal.
 // SalakAmount: how much of SavingAmount has been converted into a Salak
 // purchase so far (confirmed — not vestigial).
-SavingKapook {
+KapookGoal {
 	ID uuid pk
 	GoalAmount decimal
 	SavingAmount decimal
 	AccountID uuid > Account.ID
-	Status boolean
+	IsActive boolean
 	SalakAmount decimal
-}
-
-// Because Account mirrors the legacy core-banking system and can't be
-// altered with a new column, the Kapook<->savings-account link (chosen
-// once, at Kapook account creation) lives in its own table.
-// UNIQUE(KapookAccountID): each Kapook account links to exactly one savings
-// account, but a savings account may back multiple Kapook accounts (e.g.
-// separate "Car" and "Vacation" goals funded from the same paycheck
-// account).
-KapookAccountConnection {
-	ID uuid pk
-	KapookAccountID uuid > Account.ID
-	SavingsAccountID uuid > Account.ID
-	CreatedAt timestamp
 }
 
 // Single blanket acceptance per user (confirmed) — no version/document
 // tracking needed.
-AcceptTermCondition {
+TermConditionAcceptance {
 	ID uuid pk
 	UserID uuid > User.ID
 	AcceptDate timestamp
@@ -173,12 +167,12 @@ AcceptTermCondition {
 	UpdatedAt timestamp
 }
 
-// CollectionID is required — every badge must belong to a category
+// CategoryID is required — every badge must belong to a category
 // (confirmed).
 Badge {
 	ID uuid pk
 	ImageURL string
-	CollectionID uuid > BadgeCategory.ID
+	CategoryID uuid > BadgeCategory.ID
 	CreatedAt timestamp
 	UpdatedAt timestamp
 }
@@ -211,8 +205,8 @@ UserDefaultBadge {
 }
 
 BadgeCategory {
+	ID uuid pk
 	Name string
 	CreatedAt timestamp
 	UpdatedAt timestamp
-	ID uuid pk
 }
