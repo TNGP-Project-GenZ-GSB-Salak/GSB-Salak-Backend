@@ -10,6 +10,7 @@ import (
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/service"
@@ -88,6 +89,8 @@ type fakeSalakService struct {
 
 	validatePurchaseErr error
 
+	ensureNotDrawDayErr error
+
 	mintHoldingResult salakdomain.Holding
 	mintHoldingErr    error
 }
@@ -105,6 +108,10 @@ func (f *fakeSalakService) GetProduct(ctx context.Context, productID uuid.UUID) 
 
 func (f *fakeSalakService) ValidatePurchase(product salakdomain.Product, amount decimal.Decimal) error {
 	return f.validatePurchaseErr
+}
+
+func (f *fakeSalakService) EnsureNotDrawDay(ctx context.Context, product salakdomain.Product) error {
+	return f.ensureNotDrawDayErr
 }
 
 func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (salakdomain.Holding, error) {
@@ -291,6 +298,23 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 
 		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "150"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("draw day is rejected before any transaction opens", func(t *testing.T) {
+		fundingID, salakID := uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[fundingID] = savingsAccount(fundingID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+		salakSvc := &fakeSalakService{
+			getProductResult:    activeProduct(),
+			ensureNotDrawDayErr: apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day", salak.ErrDrawDay),
+		}
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{owns: true}, testClock())
+
+		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, uuid.New(), nil, mustDecimal(t, "1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		assert.True(t, errors.Is(err, salak.ErrDrawDay), "expected errors.Is(err, salak.ErrDrawDay), got: %v", err)
+		assert.Empty(t, accounts.debitCalls, "no debit should happen once the draw-day guard rejects")
 	})
 
 	t.Run("success commits the transaction and returns a full receipt", func(t *testing.T) {

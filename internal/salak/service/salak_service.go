@@ -37,15 +37,25 @@ func randomTicketLetter() (string, error) {
 	return string(rune(thaiConsonantStart + n.Int64())), nil
 }
 
-type SalakService struct {
-	products salak.ProductRepository
-	holdings salak.HoldingRepository
-	accounts account.Service
-	clock    clock.Clock
+// truncateToDate drops the time-of-day component, in UTC. MintHolding and
+// EnsureNotDrawDay must agree on what "today" means - if the guard checked
+// today's draw-day status against a different truncation than the holding's
+// eventual purchase_date, the two could disagree at the boundary between
+// "not a draw day" and "is a draw day".
+func truncateToDate(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository, accounts account.Service, clk clock.Clock) *SalakService {
-	return &SalakService{products: products, holdings: holdings, accounts: accounts, clock: clk}
+type SalakService struct {
+	products  salak.ProductRepository
+	holdings  salak.HoldingRepository
+	accounts  account.Service
+	drawDates salak.DrawDateRepository
+	clock     clock.Clock
+}
+
+func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository, accounts account.Service, drawDates salak.DrawDateRepository, clk clock.Clock) *SalakService {
+	return &SalakService{products: products, holdings: holdings, accounts: accounts, drawDates: drawDates, clock: clk}
 }
 
 var _ salak.Service = (*SalakService)(nil)
@@ -87,6 +97,22 @@ func (s *SalakService) ValidatePurchase(product domain.Product, amount decimal.D
 	return nil
 }
 
+// EnsureNotDrawDay rejects a purchase on product's draw day
+// (หยุดรับฝากทุกวันที่ออกรางวัล), wrapping salak.ErrDrawDay so a caller can
+// recognise it as retryable via errors.Is - distinct from a fatal failure
+// like insufficient funds, which is also KindValidation but not retryable.
+func (s *SalakService) EnsureNotDrawDay(ctx context.Context, product domain.Product) error {
+	today := truncateToDate(s.clock.Now())
+	isDrawDay, err := s.drawDates.IsDrawDay(ctx, product.ID, today)
+	if err != nil {
+		return apperror.Internal("failed to check draw-day calendar", err)
+	}
+	if isDrawDay {
+		return apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day - try again after the draw day passes", salak.ErrDrawDay)
+	}
+	return nil
+}
+
 func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (domain.Holding, error) {
 	product, err := s.products.FindByID(ctx, productID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -111,7 +137,7 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 	}
 
 	now := s.clock.Now()
-	purchaseDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	purchaseDate := truncateToDate(now)
 
 	holding := &domain.Holding{
 		ID:             uuid.New(),

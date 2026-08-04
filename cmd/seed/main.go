@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/config"
@@ -65,6 +66,28 @@ func main() {
 			log.Fatalf("failed to seed product %s: %v", products[i].Code, err)
 		}
 		log.Printf("seeded salak product: %s", products[i].Code)
+	}
+
+	// Draw dates are a real business fact, not demo data, so they're seeded
+	// unconditionally (like the products themselves) rather than gated
+	// behind SEED_DEMO_DATA.
+	drawDateRepo := salakrepo.NewGormDrawDateRepository(gdb)
+	currentYear := time.Now().UTC().Year()
+	years := []int{currentYear, currentYear + 1}
+
+	for i := range products {
+		product, err := productRepo.FindByCode(ctx, products[i].Code)
+		if err != nil {
+			log.Fatalf("failed to look up seeded product %s: %v", products[i].Code, err)
+		}
+
+		drawDates := generateDrawDates(product.TermMonths, years)
+		for _, d := range drawDates {
+			if err := drawDateRepo.Create(ctx, &salakdomain.DrawDate{ID: uuid.New(), ProductID: product.ID, DrawDate: d}); err != nil {
+				log.Fatalf("failed to seed draw date %s for %s: %v", d.Format("2006-01-02"), product.Code, err)
+			}
+		}
+		log.Printf("seeded %d draw dates for %s (%d-%d)", len(drawDates), product.Code, years[0], years[len(years)-1])
 	}
 
 	if !cfg.SeedDemoData {

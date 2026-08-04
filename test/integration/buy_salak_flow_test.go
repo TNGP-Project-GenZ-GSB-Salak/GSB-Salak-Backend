@@ -40,6 +40,7 @@ func newBuySalakService(tx *gorm.DB) (*txservice.BuySalakService, *accountrepo.G
 		salakrepo.NewGormProductRepository(tx),
 		salakrepo.NewGormHoldingRepository(tx),
 		accountSvc,
+		salakrepo.NewGormDrawDateRepository(tx),
 		clock.Real{},
 	)
 	ledgerRepository := txrepo.NewGormLedgerRepository(tx)

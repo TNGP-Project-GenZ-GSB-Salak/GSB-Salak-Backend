@@ -60,6 +60,9 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
 		return transaction.BuySalakReceipt{}, err
 	}
+	if err := s.salakSvc.EnsureNotDrawDay(ctx, product); err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
 
 	if badgeID != nil {
 		owns, err := s.badgeSvc.UserOwnsBadge(ctx, userID, *badgeID)
