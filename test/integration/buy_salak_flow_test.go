@@ -12,6 +12,7 @@ import (
 	badgerepo "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/repository"
 	badgeservice "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
@@ -39,10 +40,12 @@ func newBuySalakService(tx *gorm.DB) (*txservice.BuySalakService, *accountrepo.G
 		salakrepo.NewGormProductRepository(tx),
 		salakrepo.NewGormHoldingRepository(tx),
 		accountSvc,
+		salakrepo.NewGormDrawDateRepository(tx),
+		clock.Real{},
 	)
 	ledgerRepository := txrepo.NewGormLedgerRepository(tx)
 	badgeSvc := badgeservice.NewBadgeService(badgerepo.NewGormBadgeRepository(tx))
-	return txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepository, badgeSvc), accountRepository
+	return txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepository, badgeSvc, clock.Real{}), accountRepository
 }
 
 func TestBuySalakFlow_HappyPath_DebitsCreditsMintsAndLedgers(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
@@ -71,6 +72,15 @@ func mustCreateProduct(t *testing.T, tx *gorm.DB, code string, unitPrice, minPur
 	}
 	require.NoError(t, salakrepo.NewGormProductRepository(tx).Upsert(context.Background(), p))
 	return *p
+}
+
+// mustCreateDrawDate inserts a draw_dates row via its only write path,
+// failing the test immediately on error.
+func mustCreateDrawDate(t *testing.T, tx *gorm.DB, productID uuid.UUID, date time.Time) salakdomain.DrawDate {
+	t.Helper()
+	d := &salakdomain.DrawDate{ID: uuid.New(), ProductID: productID, DrawDate: date}
+	require.NoError(t, salakrepo.NewGormDrawDateRepository(tx).Create(context.Background(), d))
+	return *d
 }
 
 // uniqueAccountNumber returns a syntactically-plausible, collision-free

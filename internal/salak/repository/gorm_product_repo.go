@@ -33,6 +33,15 @@ func (r *GormProductRepository) FindByID(ctx context.Context, id uuid.UUID) (dom
 	return p, err
 }
 
+func (r *GormProductRepository) FindByCode(ctx context.Context, code string) (domain.Product, error) {
+	var p domain.Product
+	err := r.db.WithContext(ctx).Where("code = ?", code).First(&p).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Product{}, err
+	}
+	return p, err
+}
+
 func (r *GormProductRepository) Upsert(ctx context.Context, p *domain.Product) error {
 	return r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{

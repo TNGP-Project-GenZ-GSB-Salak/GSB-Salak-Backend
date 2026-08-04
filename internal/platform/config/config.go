@@ -38,6 +38,12 @@ type Config struct {
 	JWTSecret     string
 	JWTExpiryMins int
 	SeedDemoData  bool
+	// FixedClockRFC3339, when set, pins the business clock (see
+	// internal/platform/clock) to this instant instead of the real wall
+	// clock. A test/demo affordance only - e.g. so a Playwright run's
+	// server never lands on a real-calendar draw day by accident. Never set
+	// this outside local/test environments.
+	FixedClockRFC3339 string
 }
 
 func Load() Config {
@@ -52,9 +58,10 @@ func Load() Config {
 			Name:     getEnv("DB_NAME", "gsb_salak"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		JWTSecret:     getEnv("JWT_SECRET", ""),
-		JWTExpiryMins: getEnvInt("JWT_EXPIRY_MINUTES", 60),
-		SeedDemoData:  getEnvBool("SEED_DEMO_DATA", false),
+		JWTSecret:         getEnv("JWT_SECRET", ""),
+		JWTExpiryMins:     getEnvInt("JWT_EXPIRY_MINUTES", 60),
+		SeedDemoData:      getEnvBool("SEED_DEMO_DATA", false),
+		FixedClockRFC3339: getEnv("FIXED_CLOCK_RFC3339", ""),
 	}
 
 	cfg.MigrateDSN = getEnv("MIGRATE_DATABASE_URL", cfg.DB.URL())

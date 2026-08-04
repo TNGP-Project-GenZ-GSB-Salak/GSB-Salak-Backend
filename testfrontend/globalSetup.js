@@ -3,12 +3,9 @@
 // (buy-salak mutates balances/ticket numbers, which would otherwise drift).
 // Assumes docker-compose Postgres is already up, migrated, and seeded once
 // (see testfrontend/README.md).
-const { execSync } = require("child_process");
+const { execSql } = require("./tests/helpers/db");
 
 module.exports = async function globalSetup() {
-  const container = process.env.DB_CONTAINER || "gsb-salak-backend-db-1";
-  const dbName = process.env.DB_NAME || "gsb_salak";
-
   const statements = [
     "UPDATE account.accounts SET balance = 50000 WHERE account_number = '1234009012'",
     "UPDATE account.accounts SET balance = 0 WHERE account_number = '4001000111'",
@@ -22,9 +19,7 @@ module.exports = async function globalSetup() {
   ].join("; ");
 
   try {
-    execSync(`docker exec ${container} psql -U postgres -d ${dbName} -c "${statements}"`, {
-      stdio: "inherit",
-    });
+    execSql(statements);
   } catch (err) {
     console.error(
       "\nFailed to reset demo data before the test run.\n" +

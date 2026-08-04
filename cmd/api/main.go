@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/config"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/db"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
@@ -55,11 +58,22 @@ func main() {
 
 	signer := jwtutil.NewSigner(cfg.JWTSecret, cfg.JWTExpiryMins)
 
+	var clk clock.Clock = clock.Real{}
+	if cfg.FixedClockRFC3339 != "" {
+		fixed, err := time.Parse(time.RFC3339, cfg.FixedClockRFC3339)
+		if err != nil {
+			log.Fatalf("invalid FIXED_CLOCK_RFC3339: %v", err)
+		}
+		clk = clock.Fixed(fixed)
+		log.Printf("business clock pinned to %s via FIXED_CLOCK_RFC3339 - do not set this outside local/test", fixed)
+	}
+
 	// Repositories
 	userRepository := userrepo.NewGormUserRepository(gdb)
 	accountRepository := accountrepo.NewGormAccountRepository(gdb)
 	productRepository := salakrepo.NewGormProductRepository(gdb)
 	holdingRepository := salakrepo.NewGormHoldingRepository(gdb)
+	drawDateRepository := salakrepo.NewGormDrawDateRepository(gdb)
 	ledgerRepository := transactionrepo.NewGormLedgerRepository(gdb)
 	badgeRepository := badgerepo.NewGormBadgeRepository(gdb)
 	termsRepository := kapookrepo.NewGormTermsRepository(gdb)
@@ -69,10 +83,18 @@ func main() {
 	// Services (composition root wires concrete services behind each domain's interface)
 	authService := usersvc.NewAuthService(userRepository, signer)
 	accountService := accountsvc.NewAccountService(accountRepository)
-	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService)
+	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService, drawDateRepository, clk)
 	badgeService := badgesvc.NewBadgeService(badgeRepository)
-	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService)
+	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService, clk)
 	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService, gdb, ledgerRepository, kapookTransactionRepository)
+
+	if activeProducts, err := productRepository.ListActive(context.Background()); err != nil {
+		log.Printf("WARNING: failed to check draw-date calendar coverage: %v", err)
+	} else {
+		for _, w := range drawDateCoverageWarnings(context.Background(), activeProducts, drawDateRepository, clk.Now(), 60*24*time.Hour) {
+			log.Printf("WARNING: %s", w)
+		}
+	}
 
 	// HTTP handlers
 	userHandler := userhttp.NewHandler(authService)

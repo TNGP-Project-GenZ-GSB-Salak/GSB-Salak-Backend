@@ -3,12 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/badge"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
 	txdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/domain"
@@ -23,10 +23,11 @@ type BuySalakService struct {
 	salakSvc   salak.Service
 	ledgerRepo transaction.LedgerRepository
 	badgeSvc   badge.Service
+	clock      clock.Clock
 }
 
-func NewBuySalakService(db *gorm.DB, accounts account.Service, salakSvc salak.Service, ledgerRepo transaction.LedgerRepository, badgeSvc badge.Service) *BuySalakService {
-	return &BuySalakService{db: db, accounts: accounts, salakSvc: salakSvc, ledgerRepo: ledgerRepo, badgeSvc: badgeSvc}
+func NewBuySalakService(db *gorm.DB, accounts account.Service, salakSvc salak.Service, ledgerRepo transaction.LedgerRepository, badgeSvc badge.Service, clk clock.Clock) *BuySalakService {
+	return &BuySalakService{db: db, accounts: accounts, salakSvc: salakSvc, ledgerRepo: ledgerRepo, badgeSvc: badgeSvc, clock: clk}
 }
 
 var _ transaction.Service = (*BuySalakService)(nil)
@@ -59,6 +60,9 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
 		return transaction.BuySalakReceipt{}, err
 	}
+	if err := s.salakSvc.EnsureNotDrawDay(ctx, product); err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
 
 	if badgeID != nil {
 		owns, err := s.badgeSvc.UserOwnsBadge(ctx, userID, *badgeID)
@@ -88,7 +92,7 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 		}
 
 		refID := uuid.New()
-		now := time.Now().UTC()
+		now := s.clock.Now()
 		description := fmt.Sprintf("Buy %s", product.Name)
 
 		debitEntry := &txdomain.LedgerEntry{
