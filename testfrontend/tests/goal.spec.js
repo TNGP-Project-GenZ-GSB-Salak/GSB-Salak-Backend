@@ -1,6 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const { createShooter } = require("./helpers/screenshot");
 const { loginAsDemo } = require("./helpers/auth");
+const { SAVINGS_ACCOUNT_ID } = require("./helpers/fixtures");
 
 test.describe("kapook goal", () => {
   test("creating a goal shows it with progress, and it persists across reload", async ({ page }) => {
@@ -38,12 +39,54 @@ test.describe("kapook goal", () => {
     await expect(page.getByTestId("goal-progress")).toHaveText("0");
     await shoot(page, "goal-created");
 
+    // Pay in from the demo user's savings account and see progress move.
+    await page.getByTestId("savings-account-select").selectOption(SAVINGS_ACCOUNT_ID);
+    await page.getByTestId("deposit-amount-input").fill("1500");
+    await shoot(page, "deposit-form-filled");
+
+    await page.getByTestId("deposit-submit").click();
+
+    await expect(page.getByTestId("goal-saved")).toHaveText("1500");
+    await expect(page.getByTestId("goal-progress")).toHaveText("30");
+    await shoot(page, "progress-after-deposit");
+
     // Reloading re-fetches from the API rather than trusting client state,
-    // proving the goal actually persisted server-side.
+    // proving the goal AND the deposit actually persisted server-side.
     await page.reload();
     await expect(page.getByTestId("goal-view")).toBeVisible();
     await expect(page.getByTestId("goal-form-section")).toBeHidden();
+    await expect(page.getByTestId("goal-saved")).toHaveText("1500");
     await shoot(page, "still-active-after-reload");
+  });
+
+  test("a deposit that would exceed the target is rejected without changing the balance", async ({ page }) => {
+    const shoot = createShooter("goal", "deposit-exceeds-target");
+
+    await loginAsDemo(page);
+    await page.goto("/goal.html");
+
+    // Continues from the previous test: goal target 5000, already saved 1500.
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    const savingsBefore = await page.evaluate(() =>
+      apiFetch("/accounts").then((accounts) => accounts.find((a) => a.type === "savings").balance)
+    );
+
+    await page.getByTestId("savings-account-select").selectOption(SAVINGS_ACCOUNT_ID);
+    await page.getByTestId("deposit-amount-input").fill("4000"); // 1500 + 4000 = 5500 > 5000 target
+    await shoot(page, "form-filled");
+
+    await page.getByTestId("deposit-submit").click();
+
+    const error = page.getByTestId("message");
+    await expect(error).toHaveText(/exceed the goal's target/i);
+    // The rejected deposit must not have moved progress.
+    await expect(page.getByTestId("goal-saved")).toHaveText("1500");
+    await shoot(page, "rejected");
+
+    const savingsAfter = await page.evaluate(() =>
+      apiFetch("/accounts").then((accounts) => accounts.find((a) => a.type === "savings").balance)
+    );
+    expect(savingsAfter).toBe(savingsBefore);
   });
 
   test("a second active goal is rejected by the API even though the UI hides the form", async ({ page }) => {

@@ -5,7 +5,9 @@ import (
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GormGoalRepository struct {
@@ -29,4 +31,23 @@ func (r *GormGoalRepository) FindActiveByAccountID(ctx context.Context, accountI
 		return domain.Goal{}, err
 	}
 	return g, nil
+}
+
+func (r *GormGoalRepository) FindActiveByAccountIDForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Goal, error) {
+	var g domain.Goal
+	err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("account_id = ? AND is_active", accountID).
+		First(&g).Error
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	return g, nil
+}
+
+func (r *GormGoalRepository) UpdateSavingAmount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Update("saving_amount", newSavingAmount).Error
 }

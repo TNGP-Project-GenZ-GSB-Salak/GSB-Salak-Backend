@@ -18,6 +18,12 @@ type createGoalRequest struct {
 	GoalAmount decimal.Decimal `json:"goal_amount" validate:"required"`
 }
 
+type depositRequest struct {
+	KapookAccountID  uuid.UUID       `json:"kapook_account_id" validate:"required"`
+	SavingsAccountID uuid.UUID       `json:"savings_account_id" validate:"required"`
+	Amount           decimal.Decimal `json:"amount" validate:"required"`
+}
+
 type goalResponse struct {
 	ID            uuid.UUID       `json:"id"`
 	AccountID     uuid.UUID       `json:"account_id"`

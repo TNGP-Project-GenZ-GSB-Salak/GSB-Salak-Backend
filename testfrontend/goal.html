@@ -22,6 +22,19 @@
       <li>Converted to Salak: <span data-testid="goal-converted"></span> THB</li>
       <li>Progress: <span data-testid="goal-progress"></span>%</li>
     </ul>
+
+    <h3>Pay in</h3>
+    <form id="deposit-form" data-testid="deposit-form">
+      <label>
+        From savings account
+        <select name="savings_account_id" data-testid="savings-account-select" required></select>
+      </label>
+      <label>
+        Amount (THB)
+        <input name="amount" type="number" data-testid="deposit-amount-input" required />
+      </label>
+      <button type="submit" data-testid="deposit-submit">Pay in</button>
+    </form>
   </section>
 
   <section id="goal-form-section" data-testid="goal-form-section">
@@ -49,6 +62,8 @@
     const goalFormSection = document.getElementById("goal-form-section");
     const goalForm = document.getElementById("goal-form");
     const productSelect = document.querySelector('[name="product_id"]');
+    const depositForm = document.getElementById("deposit-form");
+    const savingsAccountSelect = document.querySelector('[name="savings_account_id"]');
     const message = document.getElementById("message");
 
     let kapookAccountId = null;
@@ -77,6 +92,10 @@
       const kapookAccount = accounts.find((a) => a.type === "kapook");
       kapookAccountId = kapookAccount.id;
 
+      for (const a of accounts.filter((a) => a.type === "savings")) {
+        savingsAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
+      }
+
       await loadProducts();
 
       try {
@@ -102,6 +121,27 @@
           }),
         });
         renderGoal(goal);
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+
+    depositForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+
+      const formData = new FormData(depositForm);
+      try {
+        const goal = await apiFetch("/kapook/goals/deposit", {
+          method: "POST",
+          body: JSON.stringify({
+            kapook_account_id: kapookAccountId,
+            savings_account_id: formData.get("savings_account_id"),
+            amount: Number(formData.get("amount")),
+          }),
+        });
+        renderGoal(goal);
+        depositForm.reset();
       } catch (err) {
         showError(message, err);
       }

@@ -22,6 +22,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/kapook/terms", h.GetTermsStatus)
 	r.Post("/kapook/goals", h.CreateGoal)
 	r.Get("/kapook/goals/active", h.GetActiveGoal)
+	r.Post("/kapook/goals/deposit", h.Deposit)
 }
 
 // AcceptTerms godoc
@@ -126,6 +127,39 @@ func (h *Handler) GetActiveGoal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	goal, err := h.service.GetActiveGoal(r.Context(), userID, accountID)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toGoalResponse(goal))
+}
+
+// Deposit godoc
+// @Summary      Pay into a Kapook goal
+// @Description  Moves any positive amount from a customer-chosen savings account into the kapook account, atomically, and bumps the active goal's saved amount. Rejected if that would exceed the goal's target.
+// @Tags         kapook
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      depositRequest  true  "Deposit details"
+// @Success      200      {object}  httpserver.DataEnvelope{data=goalResponse}
+// @Failure      400      {object}  httpserver.ErrorEnvelope
+// @Failure      401      {object}  httpserver.ErrorEnvelope
+// @Failure      404      {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/kapook/goals/deposit [post]
+func (h *Handler) Deposit(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var req depositRequest
+	if err := httpserver.DecodeAndValidate(r, &req); err != nil {
+		httpserver.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	goal, err := h.service.Deposit(r.Context(), userID, req.KapookAccountID, req.SavingsAccountID, req.Amount)
 	if err != nil {
 		httpserver.Fail(w, r, err)
 		return

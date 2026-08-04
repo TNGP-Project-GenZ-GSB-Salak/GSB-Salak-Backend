@@ -14,6 +14,7 @@ import (
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
+	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,7 +22,10 @@ import (
 )
 
 // newKapookService wires the *real* KapookService - not fakes - the same
-// way cmd/api/main.go does, with every repo constructed on the given tx.
+// way cmd/api/main.go does, with every repo constructed on the given tx
+// (including the service's own s.db.Transaction call, which GORM turns into
+// a SAVEPOINT since tx is already inside an open transaction - the same
+// technique newBuySalakService in buy_salak_flow_test.go uses).
 func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.GormTermsRepository) {
 	accountSvc := accountservice.NewAccountService(accountrepo.NewGormAccountRepository(tx))
 	salakSvc := salakservice.NewSalakService(
@@ -31,7 +35,9 @@ func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.Go
 	)
 	termsRepo := kapookrepo.NewGormTermsRepository(tx)
 	goalRepo := kapookrepo.NewGormGoalRepository(tx)
-	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc), termsRepo
+	ledgerRepo := txrepo.NewGormLedgerRepository(tx)
+	transactionRepo := kapookrepo.NewGormTransactionRepository(tx)
+	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo), termsRepo
 }
 
 func TestKapookGoalFlow_HappyPath_CreatesAndReadsBackActiveGoal(t *testing.T) {
