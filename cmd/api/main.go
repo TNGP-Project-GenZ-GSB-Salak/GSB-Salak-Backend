@@ -19,6 +19,10 @@ import (
 	badgerepo "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/repository"
 	badgesvc "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
 
+	kapookhttp "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/http"
+	kapookrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/repository"
+	kapooksvc "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/service"
+
 	salakhttp "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/http"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salaksvc "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
@@ -58,6 +62,7 @@ func main() {
 	holdingRepository := salakrepo.NewGormHoldingRepository(gdb)
 	ledgerRepository := transactionrepo.NewGormLedgerRepository(gdb)
 	badgeRepository := badgerepo.NewGormBadgeRepository(gdb)
+	termsRepository := kapookrepo.NewGormTermsRepository(gdb)
 
 	// Services (composition root wires concrete services behind each domain's interface)
 	authService := usersvc.NewAuthService(userRepository, signer)
@@ -65,12 +70,14 @@ func main() {
 	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService)
 	badgeService := badgesvc.NewBadgeService(badgeRepository)
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService)
+	termsService := kapooksvc.NewTermsService(termsRepository)
 
 	// HTTP handlers
 	userHandler := userhttp.NewHandler(authService)
 	accountHandler := accounthttp.NewHandler(accountService)
 	salakHandler := salakhttp.NewHandler(salakService)
 	transactionHandler := transactionhttp.NewHandler(buySalakService)
+	termsHandler := kapookhttp.NewHandler(termsService)
 
 	router := httpserver.NewRouter()
 
@@ -82,6 +89,7 @@ func main() {
 			accountHandler.RegisterRoutes(r)
 			salakHandler.RegisterRoutes(r)
 			transactionHandler.RegisterRoutes(r)
+			termsHandler.RegisterRoutes(r)
 		})
 	})
 

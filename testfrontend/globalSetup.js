@@ -15,6 +15,7 @@ module.exports = async function globalSetup() {
     "DELETE FROM transaction.ledger_entries",
     "DELETE FROM salak.holdings",
     "UPDATE salak.ticket_sequence SET next_ticket_number = 1 WHERE id = 1",
+    "DELETE FROM kapook.terms_acceptances WHERE user_id = '11111111-1111-1111-1111-111111111111'",
   ].join("; ");
 
   try {

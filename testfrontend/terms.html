@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kapook Terms - GSB Salak</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Kapook Terms &amp; Conditions</h1>
+    <nav>
+      <a href="dashboard.html" data-testid="nav-dashboard">Dashboard</a>
+      <button id="logout-button" data-testid="logout-button">Log out</button>
+    </nav>
+  </header>
+
+  <section>
+    <p data-testid="terms-status">Loading...</p>
+    <button id="accept-button" data-testid="accept-terms-button">Accept terms</button>
+  </section>
+
+  <p id="message" class="hidden" data-testid="message"></p>
+
+  <script src="api.js"></script>
+  <script>
+    requireAuth();
+
+    const status = document.querySelector('[data-testid="terms-status"]');
+    const acceptButton = document.getElementById("accept-button");
+    const message = document.getElementById("message");
+
+    function renderStatus(accepted) {
+      status.textContent = accepted ? "Accepted" : "Not yet accepted";
+      status.dataset.accepted = String(accepted);
+      acceptButton.disabled = accepted;
+    }
+
+    async function loadStatus() {
+      const data = await apiFetch("/kapook/terms");
+      renderStatus(data.accepted);
+    }
+
+    acceptButton.addEventListener("click", async () => {
+      clearMessage(message);
+      try {
+        const data = await apiFetch("/kapook/terms/accept", { method: "POST" });
+        renderStatus(data.accepted);
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+
+    document.getElementById("logout-button").addEventListener("click", () => {
+      clearToken();
+      window.location.href = "login.html";
+    });
+
+    loadStatus();
+  </script>
+</body>
+</html>
