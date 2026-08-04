@@ -1,12 +1,26 @@
-.PHONY: run migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report
+.PHONY: run worker dev migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report
 
 build:
 	go build -o bin/api ./cmd/api
 	go build -o bin/migrate ./cmd/migrate
 	go build -o bin/seed ./cmd/seed
+	go build -o bin/worker ./cmd/worker
 
 run:
 	go run ./cmd/api
+
+worker:
+	go run ./cmd/worker
+
+# Runs the API and the Kapook auto-purchase worker together - the worker
+# fires nothing on its own; omitting it here is the exact silent failure
+# the worker package's docs warn about (a countdown that never expires,
+# with no error anywhere).
+dev:
+	@trap 'kill 0' EXIT; \
+	$(MAKE) run & \
+	$(MAKE) worker & \
+	wait
 
 swagger:
 	swag init -g cmd/api/main.go -o docs --parseInternal

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 type DBConfig struct {
@@ -44,6 +45,13 @@ type Config struct {
 	// server never lands on a real-calendar draw day by accident. Never set
 	// this outside local/test environments.
 	FixedClockRFC3339 string
+	// KapookCountdownDuration is how long a goal's auto-purchase countdown
+	// runs once its target is reached, defaulting to the real 24h. This is
+	// a config knob, not a code constant, specifically so a demo/test run
+	// can set it to something like 60s - a 24h countdown can't be shown in
+	// a 20-30 minute presentation, and the worker's real code path runs
+	// unchanged either way.
+	KapookCountdownDuration time.Duration
 }
 
 func Load() Config {
@@ -58,10 +66,11 @@ func Load() Config {
 			Name:     getEnv("DB_NAME", "gsb_salak"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		JWTSecret:         getEnv("JWT_SECRET", ""),
-		JWTExpiryMins:     getEnvInt("JWT_EXPIRY_MINUTES", 60),
-		SeedDemoData:      getEnvBool("SEED_DEMO_DATA", false),
-		FixedClockRFC3339: getEnv("FIXED_CLOCK_RFC3339", ""),
+		JWTSecret:               getEnv("JWT_SECRET", ""),
+		JWTExpiryMins:           getEnvInt("JWT_EXPIRY_MINUTES", 60),
+		SeedDemoData:            getEnvBool("SEED_DEMO_DATA", false),
+		FixedClockRFC3339:       getEnv("FIXED_CLOCK_RFC3339", ""),
+		KapookCountdownDuration: getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
 	}
 
 	cfg.MigrateDSN = getEnv("MIGRATE_DATABASE_URL", cfg.DB.URL())
@@ -96,6 +105,15 @@ func getEnvBool(key string, fallback bool) bool {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			return b
+		}
+	}
+	return fallback
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return fallback

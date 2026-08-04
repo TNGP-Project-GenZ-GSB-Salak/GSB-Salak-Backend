@@ -33,12 +33,30 @@ type GoalRepository interface {
 	// (e.g. a deposit) without losing a concurrent update. Requires a real
 	// tx and must not fall back to an ambient handle.
 	FindActiveByAccountIDForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Goal, error)
+	// UpdateSavingAmount is Deposit's write path: SavingAmount grows,
+	// nothing else changes.
 	UpdateSavingAmount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal) error
 	// UpdateAfterPurchase records a purchase's effect on the goal: SalakAmount
 	// grows to newSalakAmount (SavingAmount is untouched - see
 	// domain.Goal.AvailableBalance), and IsActive is set to stillActive
 	// (false only once a purchase fully satisfies GoalAmount).
 	UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error
+	// UpdateAfterWithdrawal is Withdraw's write path: SavingAmount shrinks to
+	// newSavingAmount, and IsActive is set to stillActive - false only for
+	// the all-or-nothing full withdrawal that closes a goal during its live
+	// countdown; every other withdrawal passes stillActive true.
+	UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal, stillActive bool) error
+	// MarkGoalReached stamps GoalReachedAt the moment a deposit first brings
+	// SavingAmount up to GoalAmount - starting the auto-purchase countdown.
+	MarkGoalReached(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, reachedAt time.Time) error
+	// ClaimDueGoals locks and returns up to limit active goals whose
+	// GoalReachedAt is at or before cutoff (i.e. cutoff = now minus the
+	// countdown duration), via SELECT ... FOR UPDATE SKIP LOCKED - so
+	// concurrent worker passes (different ticks overlapping, or multiple
+	// replicas) each claim a disjoint subset instead of blocking on each
+	// other. Requires a real tx; every claimed row stays locked until the
+	// caller's transaction ends.
+	ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]domain.Goal, error)
 }
 
 // TransactionRepository owns the kapook_transactions ledger of movements
@@ -72,13 +90,16 @@ type WithdrawalStatus struct {
 // FeeAmount is 0 when FeeCharged is false. NetCredited is what the savings
 // account actually received (Amount minus FeeAmount) - the kapook balance
 // and the goal's SavingAmount both drop by the full pre-fee Amount, since
-// the fee is retained rather than left behind in the Kapook.
+// the fee is retained rather than left behind in the Kapook. GoalClosed is
+// true only for the all-or-nothing full withdrawal that walks away from a
+// live countdown; every other withdrawal leaves the goal open.
 type WithdrawResult struct {
 	Goal        domain.Goal
 	Amount      decimal.Decimal
 	FeeCharged  bool
 	FeeAmount   decimal.Decimal
 	NetCredited decimal.Decimal
+	GoalClosed  bool
 }
 
 // BuyFromGoalResult is what BuyFromGoal actually did. GoalCompleted mirrors
@@ -104,13 +125,19 @@ type Service interface {
 	// Deposit debits savingsAccountID and credits kapookAccountID
 	// atomically, then bumps the account's active goal's SavingAmount -
 	// rejected if that would exceed the goal's target. Any positive
-	// amount is accepted, no minimum.
+	// amount is accepted, no minimum. The instant a deposit first brings
+	// SavingAmount up to GoalAmount, GoalReachedAt is stamped, starting the
+	// auto-purchase countdown (see the worker package).
 	Deposit(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (domain.Goal, error)
 	// Withdraw debits kapookAccountID and credits savingsAccountID
-	// atomically, for any amount up to the active goal's SavingAmount (no
-	// minimum). The goal survives - IsActive is untouched even when the
-	// withdrawal empties the balance. The first two withdrawals in the
-	// goal's current rolling-12-month window are free; later ones in the
+	// atomically, for any amount up to the active goal's AvailableBalance
+	// (no minimum). Once GoalReachedAt is set (a countdown is live),
+	// withdrawal becomes all-or-nothing: a partial amount is rejected, and
+	// withdrawing the full balance closes the goal instead of leaving it
+	// active - the customer's escape from the countdown. Before the goal is
+	// reached, the goal always survives, even a withdrawal that empties it.
+	// The first two withdrawals in the goal's current rolling-12-month
+	// window are free regardless of which case this is; later ones in the
 	// same window carry a 2% fee taken out of what reaches savings.
 	Withdraw(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (WithdrawResult, error)
 	// GetWithdrawalStatus previews the free/fee outcome a withdrawal would
@@ -124,4 +151,11 @@ type Service interface {
 	// being a valid step/max amount for it. A purchase that fully satisfies
 	// GoalAmount deactivates the goal; a partial one leaves it active.
 	BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (BuyFromGoalResult, error)
+	// BuyFromGoalInTx is BuyFromGoal's tx-supplied variant, for the kapook
+	// worker only: it runs the same validation and purchase inside a
+	// savepoint on the caller's own already-open tx (via tx.Transaction),
+	// rather than opening a new top-level one, so one goal's purchase
+	// failure rolls back to the savepoint without losing the caller's own
+	// transaction or its row locks on other claimed goals.
+	BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (BuyFromGoalResult, error)
 }

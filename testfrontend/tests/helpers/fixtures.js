@@ -19,4 +19,10 @@ module.exports = {
   KAPOOK_ACCOUNT_NUMBER: "5001000111",
   PINNED_TEST_DATE: "2026-03-10",
   FIXED_CLOCK_RFC3339: "2026-03-10T00:00:00Z",
+  // Short enough to observe within a test, long enough to assert the
+  // "counting down, not yet purchased" state before it expires. The
+  // worker's own poll tick is a fixed ~1 minute (not configurable - see
+  // cmd/worker), so a countdown spec's worst-case wait is this plus one
+  // tick, not just this alone.
+  KAPOOK_COUNTDOWN_DURATION: "10s",
 };

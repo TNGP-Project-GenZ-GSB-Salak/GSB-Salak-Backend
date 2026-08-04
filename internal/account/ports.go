@@ -24,6 +24,10 @@ type Repository interface {
 type Service interface {
 	ListByUser(ctx context.Context, userID uuid.UUID) ([]domain.Account, error)
 	GetByID(ctx context.Context, userID, accountID uuid.UUID) (domain.Account, error)
+	// GetByIDUnscoped looks up accountID with no ownership check - for
+	// trusted, unattended system callers only (the kapook worker, to
+	// resolve a claimed goal's owning user), never exposed over HTTP.
+	GetByIDUnscoped(ctx context.Context, accountID uuid.UUID) (domain.Account, error)
 	Debit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error)
 	Credit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error)
 	// LockForUpdate takes a row lock on accountID without changing its

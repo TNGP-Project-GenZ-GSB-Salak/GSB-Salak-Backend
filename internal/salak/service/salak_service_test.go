@@ -178,6 +178,10 @@ func (f *fakeAccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, acc
 	return accountdomain.Account{}, nil
 }
 
+func (f *fakeAccountService) GetByIDUnscoped(ctx context.Context, accountID uuid.UUID) (accountdomain.Account, error) {
+	return f.GetByID(ctx, uuid.Nil, accountID)
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {

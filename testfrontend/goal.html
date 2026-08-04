@@ -23,6 +23,9 @@
       <li>Progress: <span data-testid="goal-progress"></span>%</li>
     </ul>
 
+    <p id="countdown-status" class="hidden" data-testid="countdown-status"></p>
+    <p id="auto-purchase-result" class="hidden" data-testid="auto-purchase-result"></p>
+
     <h3>Pay in</h3>
     <form id="deposit-form" data-testid="deposit-form">
       <label>
@@ -101,8 +104,12 @@
     const buySalakAccountSelect = document.querySelector('[data-testid="buy-salak-account-select"]');
     const buyResultEl = document.getElementById("buy-result");
     const message = document.getElementById("message");
+    const countdownStatusEl = document.getElementById("countdown-status");
+    const autoPurchaseResultEl = document.getElementById("auto-purchase-result");
 
     let kapookAccountId = null;
+    let pollTimer = null;
+    let holdingIdsBeforeCountdown = null;
 
     function renderGoal(goal) {
       document.querySelector('[data-testid="goal-target"]').textContent = goal.goal_amount;
@@ -115,6 +122,77 @@
       goalView.classList.remove("hidden");
       goalFormSection.classList.add("hidden");
       refreshWithdrawalStatus();
+      updateCountdownStatus(goal);
+    }
+
+    // A "purchase pending" state, not a live ticking timer: the worker can
+    // legitimately defer past the nominal deadline on a draw day, and a
+    // countdown stalled at 00:00:00 would read as broken rather than as
+    // "waiting its turn." Polls /kapook/goals/active until it 404s (the
+    // goal went inactive - bought, or closed by a countdown withdrawal),
+    // then shows the resulting holding.
+    function updateCountdownStatus(goal) {
+      if (goal.goal_reached_at && goal.is_active) {
+        countdownStatusEl.textContent = "Target reached! Automatic purchase pending - this can take up to a minute.";
+        countdownStatusEl.classList.remove("hidden");
+        startPollingForAutoPurchase();
+      } else {
+        countdownStatusEl.classList.add("hidden");
+        stopPolling();
+      }
+    }
+
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    async function startPollingForAutoPurchase() {
+      if (pollTimer) return;
+      // purchase_date is a date, not a timestamp - two holdings bought on
+      // the same calendar day tie under the holdings list's "ORDER BY
+      // purchase_date DESC", so "the last one in the array" is never a
+      // safe way to find the one this countdown just bought. Snapshot
+      // what already exists before polling starts, and diff against it
+      // once the goal resolves instead.
+      if (holdingIdsBeforeCountdown === null) {
+        const accounts = await apiFetch("/accounts");
+        const salakAccount = accounts.find((a) => a.type === "salak");
+        const holdings = await apiFetch(`/salak/holdings?account_id=${salakAccount.id}`);
+        holdingIdsBeforeCountdown = new Set(holdings.map((h) => h.id));
+      }
+      pollTimer = setInterval(async () => {
+        try {
+          await apiFetch(`/kapook/goals/active?account_id=${kapookAccountId}`);
+        } catch (err) {
+          // 404: the goal is no longer active - the auto-purchase (or a
+          // manual full buy, or a during-countdown withdrawal) resolved it.
+          await handleGoalNoLongerActive();
+        }
+      }, 2000);
+    }
+
+    async function handleGoalNoLongerActive() {
+      stopPolling();
+      countdownStatusEl.textContent = "The goal is no longer active - checking what happened...";
+
+      const accounts = await apiFetch("/accounts");
+      const salakAccount = accounts.find((a) => a.type === "salak");
+      const holdings = await apiFetch(`/salak/holdings?account_id=${salakAccount.id}`);
+      const newHoldings = holdings.filter((h) => !holdingIdsBeforeCountdown.has(h.id));
+      holdingIdsBeforeCountdown = null;
+
+      if (newHoldings.length > 0) {
+        const bought = newHoldings[0];
+        countdownStatusEl.textContent = "Automatic purchase completed.";
+        autoPurchaseResultEl.textContent = `Holding: ${bought.units} units, tickets ${bought.ticket_start} to ${bought.ticket_end}.`;
+        autoPurchaseResultEl.classList.remove("hidden");
+      } else {
+        countdownStatusEl.textContent = "The goal closed without a purchase (likely a withdrawal during the countdown).";
+      }
+      goalFormSection.classList.remove("hidden");
     }
 
     async function refreshWithdrawalStatus() {

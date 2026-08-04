@@ -18,6 +18,7 @@ go run ./cmd/migrate version  # print current schema_migrations version
 go run ./cmd/migrate force <n>
 SEED_DEMO_DATA=true go run ./cmd/seed   # seed salak products + a demo user/accounts (idempotent, safe to re-run)
 go run ./cmd/api              # start the HTTP API on :8080 (see .env.example for config)
+go run ./cmd/worker            # fires Kapook goals' auto-purchase once their countdown expires - polls every minute; run alongside cmd/api, not instead of it
 
 go build ./...
 go vet ./...
@@ -45,7 +46,7 @@ internal/<domain>/
 
 The domains are `user`, `account`, `salak`, `transaction`. **`account` and `salak` must never import `transaction`** — this is the load-bearing rule in this codebase; if you're adding a feature that seems to require `account` or `salak` to know about `transaction`, the orchestration belongs in `transaction` instead. Dependencies otherwise flow one way: `account` is a leaf (imports no sibling domain); `salak` depends on `account.Service` (e.g. `ListHoldingsByAccount` verifies account ownership via `accounts.GetByID` before returning holdings); `transaction` depends on both `account.Service` and `salak.Service`. All of these are `ports.go` interfaces injected at the composition root, never concrete repos/services from another domain's package.
 
-The composition root — `cmd/api/main.go` — is the only place concrete repos/services from different domains are wired together. It builds each domain's repository → service → http.Handler bottom-up, then registers routes.
+The composition root — `cmd/api/main.go` — is the only place concrete repos/services from different domains are wired together. It builds each domain's repository → service → http.Handler bottom-up, then registers routes. `cmd/worker/main.go` is a second, smaller composition root for the Kapook auto-purchase worker (`internal/kapook/worker`) — same wiring style, no HTTP layer. Anything that mutates state unattended (no request, no authenticated user) belongs in its own `cmd/<name>` binary like this, not bolted onto `cmd/api`.
 
 ### Why `Account` is a single table with a `type` discriminator
 

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/google/uuid"
@@ -57,4 +58,32 @@ func (r *GormGoalRepository) UpdateAfterPurchase(ctx context.Context, tx *gorm.D
 		Model(&domain.Goal{}).
 		Where("id = ?", goalID).
 		Updates(map[string]interface{}{"salak_amount": newSalakAmount, "is_active": stillActive}).Error
+}
+
+func (r *GormGoalRepository) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal, stillActive bool) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Updates(map[string]interface{}{"saving_amount": newSavingAmount, "is_active": stillActive}).Error
+}
+
+func (r *GormGoalRepository) MarkGoalReached(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, reachedAt time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Update("goal_reached_at", reachedAt).Error
+}
+
+func (r *GormGoalRepository) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]domain.Goal, error) {
+	var goals []domain.Goal
+	err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+		Where("is_active AND goal_reached_at IS NOT NULL AND goal_reached_at <= ?", cutoff).
+		Order("goal_reached_at ASC").
+		Limit(limit).
+		Find(&goals).Error
+	if err != nil {
+		return nil, err
+	}
+	return goals, nil
 }

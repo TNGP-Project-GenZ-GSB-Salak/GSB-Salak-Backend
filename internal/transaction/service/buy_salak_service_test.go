@@ -86,6 +86,10 @@ func (f *fakeAccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, acc
 	return f.GetByID(ctx, uuid.Nil, accountID)
 }
 
+func (f *fakeAccountService) GetByIDUnscoped(ctx context.Context, accountID uuid.UUID) (accountdomain.Account, error) {
+	return f.GetByID(ctx, uuid.Nil, accountID)
+}
+
 // fakeSalakService is a hand-rolled implementation of salak.Service.
 type fakeSalakService struct {
 	getProductResult salakdomain.Product
