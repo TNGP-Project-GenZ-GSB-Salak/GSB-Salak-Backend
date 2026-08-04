@@ -12,6 +12,7 @@ import (
 	kapookrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/repository"
 	kapookservice "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/service"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
@@ -32,6 +33,8 @@ func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.Go
 		salakrepo.NewGormProductRepository(tx),
 		salakrepo.NewGormHoldingRepository(tx),
 		accountSvc,
+		salakrepo.NewGormDrawDateRepository(tx),
+		clock.Real{},
 	)
 	termsRepo := kapookrepo.NewGormTermsRepository(tx)
 	goalRepo := kapookrepo.NewGormGoalRepository(tx)

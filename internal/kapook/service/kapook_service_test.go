@@ -185,6 +185,7 @@ type fakeSalakService struct {
 	getProductErr    error
 
 	validatePurchaseErr error
+	ensureNotDrawDayErr error
 }
 
 func (f *fakeSalakService) ListProducts(ctx context.Context) ([]salakdomain.Product, error) {
@@ -200,6 +201,10 @@ func (f *fakeSalakService) GetProduct(ctx context.Context, productID uuid.UUID) 
 
 func (f *fakeSalakService) ValidatePurchase(product salakdomain.Product, amount decimal.Decimal) error {
 	return f.validatePurchaseErr
+}
+
+func (f *fakeSalakService) EnsureNotDrawDay(ctx context.Context, product salakdomain.Product) error {
+	return f.ensureNotDrawDayErr
 }
 
 func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (salakdomain.Holding, error) {
