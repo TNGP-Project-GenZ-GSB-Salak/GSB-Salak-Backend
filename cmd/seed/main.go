@@ -22,6 +22,7 @@ var (
 	demoUserID           = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	demoSavingsAccountID = uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	demoSalakAccountID   = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	demoKapookAccountID  = uuid.MustParse("44444444-4444-4444-4444-444444444444")
 )
 
 func main() {
@@ -106,8 +107,18 @@ func main() {
 		Balance:       decimal.Zero,
 		Currency:      "THB",
 	}
+	// One Kapook account per user, opened once and reused for every goal -
+	// it persists permanently and sits at zero between goals.
+	kapookAccount := accountdomain.Account{
+		ID:            demoKapookAccountID,
+		UserID:        demoUserID,
+		AccountNumber: "5001000111",
+		Type:          accountdomain.TypeKapook,
+		Balance:       decimal.Zero,
+		Currency:      "THB",
+	}
 
-	for _, acc := range []accountdomain.Account{savingsAccount, salakAccount} {
+	for _, acc := range []accountdomain.Account{savingsAccount, salakAccount, kapookAccount} {
 		acc := acc
 		if err := gdb.WithContext(ctx).
 			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "account_number"}}, DoNothing: true}).

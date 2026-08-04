@@ -1,7 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const { createShooter } = require("./helpers/screenshot");
 const { loginAsDemo } = require("./helpers/auth");
-const { SAVINGS_ACCOUNT_NUMBER, SALAK_ACCOUNT_NUMBER } = require("./helpers/fixtures");
+const { SAVINGS_ACCOUNT_NUMBER, SALAK_ACCOUNT_NUMBER, KAPOOK_ACCOUNT_NUMBER } = require("./helpers/fixtures");
 
 test.describe("dashboard", () => {
   test("renders accounts and salak products after login", async ({ page }) => {
@@ -10,10 +10,15 @@ test.describe("dashboard", () => {
     await loginAsDemo(page);
     await shoot(page, "dashboard-loaded");
 
-    await expect(page.getByTestId("account-row")).toHaveCount(2);
+    await expect(page.getByTestId("account-row")).toHaveCount(3);
     const accountNumbers = await page.getByTestId("account-number").allTextContents();
     expect(accountNumbers).toContain(SAVINGS_ACCOUNT_NUMBER);
     expect(accountNumbers).toContain(SALAK_ACCOUNT_NUMBER);
+    expect(accountNumbers).toContain(KAPOOK_ACCOUNT_NUMBER);
+
+    const kapookRow = page.getByTestId("account-row").filter({ hasText: KAPOOK_ACCOUNT_NUMBER });
+    await expect(kapookRow.getByTestId("account-type")).toHaveText("kapook");
+    await expect(kapookRow.getByTestId("account-balance")).toHaveText("0");
 
     await expect(page.getByTestId("product-row")).toHaveCount(2);
     const productNames = await page.getByTestId("product-name").allTextContents();

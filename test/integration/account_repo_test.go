@@ -66,6 +66,25 @@ func TestAccountRepo_Create_InvalidTypeRejectedByCheckConstraint(t *testing.T) {
 	requirePgErrorCode(t, err, sqlStateCheckViolation)
 }
 
+func TestAccountRepo_Create_KapookTypeAccepted(t *testing.T) {
+	tx := newTestTx(t)
+	user := mustCreateUser(t, tx, "")
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	a := &accountdomain.Account{
+		ID:            uuid.New(),
+		UserID:        user.ID,
+		AccountNumber: uniqueAccountNumber(),
+		Type:          accountdomain.TypeKapook,
+		Currency:      "THB",
+	}
+	require.NoError(t, repo.Create(context.Background(), tx, a))
+
+	got, err := repo.FindByID(context.Background(), a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, accountdomain.TypeKapook, got.Type)
+}
+
 func TestAccountRepo_Create_NegativeBalanceRejectedByCheckConstraint(t *testing.T) {
 	tx := newTestTx(t)
 	user := mustCreateUser(t, tx, "")

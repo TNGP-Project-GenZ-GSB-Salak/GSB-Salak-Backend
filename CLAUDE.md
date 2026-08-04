@@ -49,7 +49,7 @@ The composition root — `cmd/api/main.go` — is the only place concrete repos/
 
 ### Why `Account` is a single table with a `type` discriminator
 
-`account.accounts` has a `type` column (`savings` | `salak`) rather than separate tables per account kind. This is deliberate: MyMo's account-list screen is a flat list of all account types with a balance each, and this design keeps that screen a single `SELECT ... WHERE user_id = ?` with no joins. A Salak-type account's `balance` is the aggregate THB value of its `salak.holdings`, kept in sync on every mint — it is not derived on read.
+`account.accounts` has a `type` column (`savings` | `salak` | `kapook`) rather than separate tables per account kind. This is deliberate: MyMo's account-list screen is a flat list of all account types with a balance each, and this design keeps that screen a single `SELECT ... WHERE user_id = ?` with no joins. A Salak-type account's `balance` is the aggregate THB value of its `salak.holdings`, kept in sync on every mint — it is not derived on read.
 
 ### Cross-domain atomicity: the `tx *gorm.DB` parameter pattern
 

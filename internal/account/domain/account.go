@@ -12,6 +12,10 @@ type Type string
 const (
 	TypeSavings Type = "savings"
 	TypeSalak   Type = "salak"
+	// TypeKapook is a real เผื่อเรียก deposit account, opened once per user
+	// and reused for every goal. This is our own role label, not a mirror
+	// of the bank's product code - the same way TypeSavings/TypeSalak are.
+	TypeKapook Type = "kapook"
 )
 
 type Account struct {
