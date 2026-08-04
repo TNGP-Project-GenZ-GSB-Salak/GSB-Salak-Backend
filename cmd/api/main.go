@@ -63,6 +63,7 @@ func main() {
 	ledgerRepository := transactionrepo.NewGormLedgerRepository(gdb)
 	badgeRepository := badgerepo.NewGormBadgeRepository(gdb)
 	termsRepository := kapookrepo.NewGormTermsRepository(gdb)
+	goalRepository := kapookrepo.NewGormGoalRepository(gdb)
 
 	// Services (composition root wires concrete services behind each domain's interface)
 	authService := usersvc.NewAuthService(userRepository, signer)
@@ -70,14 +71,14 @@ func main() {
 	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService)
 	badgeService := badgesvc.NewBadgeService(badgeRepository)
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService)
-	termsService := kapooksvc.NewTermsService(termsRepository)
+	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService)
 
 	// HTTP handlers
 	userHandler := userhttp.NewHandler(authService)
 	accountHandler := accounthttp.NewHandler(accountService)
 	salakHandler := salakhttp.NewHandler(salakService)
 	transactionHandler := transactionhttp.NewHandler(buySalakService)
-	termsHandler := kapookhttp.NewHandler(termsService)
+	kapookHandler := kapookhttp.NewHandler(kapookService)
 
 	router := httpserver.NewRouter()
 
@@ -89,7 +90,7 @@ func main() {
 			accountHandler.RegisterRoutes(r)
 			salakHandler.RegisterRoutes(r)
 			transactionHandler.RegisterRoutes(r)
-			termsHandler.RegisterRoutes(r)
+			kapookHandler.RegisterRoutes(r)
 		})
 	})
 

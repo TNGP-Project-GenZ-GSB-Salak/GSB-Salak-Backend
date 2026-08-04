@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kapook Goal - GSB Salak</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Kapook Goal</h1>
+    <nav>
+      <a href="dashboard.html" data-testid="nav-dashboard">Dashboard</a>
+      <button id="logout-button" data-testid="logout-button">Log out</button>
+    </nav>
+  </header>
+
+  <section id="goal-view" class="hidden" data-testid="goal-view">
+    <h2>Your goal</h2>
+    <ul>
+      <li>Target: <span data-testid="goal-target"></span> THB</li>
+      <li>Saved: <span data-testid="goal-saved"></span> THB</li>
+      <li>Converted to Salak: <span data-testid="goal-converted"></span> THB</li>
+      <li>Progress: <span data-testid="goal-progress"></span>%</li>
+    </ul>
+  </section>
+
+  <section id="goal-form-section" data-testid="goal-form-section">
+    <h2>Set a savings goal</h2>
+    <form id="goal-form" data-testid="goal-form">
+      <label>
+        Salak product
+        <select name="product_id" data-testid="product-select" required></select>
+      </label>
+      <label>
+        Target amount (THB)
+        <input name="goal_amount" type="number" step="1000" data-testid="goal-amount-input" required />
+      </label>
+      <button type="submit" data-testid="create-goal-submit">Create goal</button>
+    </form>
+  </section>
+
+  <p id="message" class="hidden" data-testid="message"></p>
+
+  <script src="api.js"></script>
+  <script>
+    requireAuth();
+
+    const goalView = document.getElementById("goal-view");
+    const goalFormSection = document.getElementById("goal-form-section");
+    const goalForm = document.getElementById("goal-form");
+    const productSelect = document.querySelector('[name="product_id"]');
+    const message = document.getElementById("message");
+
+    let kapookAccountId = null;
+
+    function renderGoal(goal) {
+      document.querySelector('[data-testid="goal-target"]').textContent = goal.goal_amount;
+      document.querySelector('[data-testid="goal-saved"]').textContent = goal.saving_amount;
+      document.querySelector('[data-testid="goal-converted"]').textContent = goal.salak_amount;
+      const target = Number(goal.goal_amount);
+      const saved = Number(goal.saving_amount);
+      const progress = target > 0 ? Math.round((saved / target) * 100) : 0;
+      document.querySelector('[data-testid="goal-progress"]').textContent = String(progress);
+      goalView.classList.remove("hidden");
+      goalFormSection.classList.add("hidden");
+    }
+
+    async function loadProducts() {
+      const products = await apiFetch("/salak/products");
+      for (const p of products) {
+        productSelect.appendChild(new Option(p.name, p.id));
+      }
+    }
+
+    async function init() {
+      const accounts = await apiFetch("/accounts");
+      const kapookAccount = accounts.find((a) => a.type === "kapook");
+      kapookAccountId = kapookAccount.id;
+
+      await loadProducts();
+
+      try {
+        const goal = await apiFetch(`/kapook/goals/active?account_id=${kapookAccountId}`);
+        renderGoal(goal);
+      } catch (err) {
+        // No active goal yet (404) - the create form stays visible.
+      }
+    }
+
+    goalForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+
+      const formData = new FormData(goalForm);
+      try {
+        const goal = await apiFetch("/kapook/goals", {
+          method: "POST",
+          body: JSON.stringify({
+            account_id: kapookAccountId,
+            product_id: formData.get("product_id"),
+            goal_amount: Number(formData.get("goal_amount")),
+          }),
+        });
+        renderGoal(goal);
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+
+    init();
+
+    document.getElementById("logout-button").addEventListener("click", () => {
+      clearToken();
+      window.location.href = "login.html";
+    });
+  </script>
+</body>
+</html>
