@@ -9,6 +9,7 @@ import (
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/google/uuid"
@@ -40,10 +41,11 @@ type SalakService struct {
 	products salak.ProductRepository
 	holdings salak.HoldingRepository
 	accounts account.Service
+	clock    clock.Clock
 }
 
-func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository, accounts account.Service) *SalakService {
-	return &SalakService{products: products, holdings: holdings, accounts: accounts}
+func NewSalakService(products salak.ProductRepository, holdings salak.HoldingRepository, accounts account.Service, clk clock.Clock) *SalakService {
+	return &SalakService{products: products, holdings: holdings, accounts: accounts, clock: clk}
 }
 
 var _ salak.Service = (*SalakService)(nil)
@@ -108,7 +110,7 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 		return domain.Holding{}, apperror.Internal("failed to generate ticket letter", err)
 	}
 
-	now := time.Now().UTC()
+	now := s.clock.Now()
 	purchaseDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 	holding := &domain.Holding{

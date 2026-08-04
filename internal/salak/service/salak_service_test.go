@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	"github.com/google/uuid"
@@ -15,6 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// fixedNow is the instant every test's injected clock reports, chosen away
+// from the real wall clock so a test that accidentally used time.Now()
+// instead of the clock seam would fail rather than pass by coincidence.
+var fixedNow = time.Date(2026, 1, 15, 3, 4, 5, 0, time.UTC)
+
+func testClock() clock.Clock { return clock.Fixed(fixedNow) }
 
 // --- fakes ---------------------------------------------------------------
 
@@ -165,7 +174,7 @@ func TestSalakService_ListProducts(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		p := activeProduct()
 		products := newFakeProductRepo(p)
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		got, err := svc.ListProducts(context.Background())
 		require.NoError(t, err)
@@ -176,7 +185,7 @@ func TestSalakService_ListProducts(t *testing.T) {
 	t.Run("repo error returns internal error", func(t *testing.T) {
 		products := newFakeProductRepo()
 		products.listErr = errors.New("db down")
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.ListProducts(context.Background())
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -189,7 +198,7 @@ func TestSalakService_GetProduct(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		p := activeProduct()
 		products := newFakeProductRepo(p)
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		got, err := svc.GetProduct(context.Background(), p.ID)
 		require.NoError(t, err)
@@ -198,7 +207,7 @@ func TestSalakService_GetProduct(t *testing.T) {
 
 	t.Run("not found", func(t *testing.T) {
 		products := newFakeProductRepo()
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.GetProduct(context.Background(), uuid.New())
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -207,7 +216,7 @@ func TestSalakService_GetProduct(t *testing.T) {
 	t.Run("repo error returns internal error", func(t *testing.T) {
 		products := newFakeProductRepo()
 		products.findByIDErr = errors.New("db down")
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.GetProduct(context.Background(), uuid.New())
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -217,7 +226,7 @@ func TestSalakService_GetProduct(t *testing.T) {
 		p := activeProduct()
 		p.IsActive = false
 		products := newFakeProductRepo(p)
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.GetProduct(context.Background(), p.ID)
 		assertAppErrKind(t, err, apperror.KindValidation)
@@ -229,7 +238,7 @@ func TestSalakService_GetProduct(t *testing.T) {
 func TestSalakService_ValidatePurchase(t *testing.T) {
 	product := activeProduct() // min=100, max=1_000_000, step=100
 
-	svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{})
+	svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 	cases := []struct {
 		name    string
@@ -268,7 +277,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 		products := newFakeProductRepo(product)
 		holdings := newFakeHoldingRepo()
 		holdings.reserveStart, holdings.reserveEnd = 1000, 1004
-		svc := service.NewSalakService(products, holdings, &fakeAccountService{})
+		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, testClock())
 
 		h, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "500"))
 		require.NoError(t, err)
@@ -280,7 +289,12 @@ func TestSalakService_MintHolding(t *testing.T) {
 		assert.EqualValues(t, 1000, h.TicketStart)
 		assert.EqualValues(t, 1004, h.TicketEnd)
 		assert.True(t, mustDecimal(t, "500").Equal(h.PurchaseAmount))
-		assert.Equal(t, h.PurchaseDate.AddDate(0, product.TermMonths, 0), h.MaturityDate)
+		// Asserted against the injected clock's fixed instant, not
+		// time.Now() - this is what proves MintHolding actually reads the
+		// clock seam rather than the wall clock.
+		wantPurchaseDate := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+		assert.Equal(t, wantPurchaseDate, h.PurchaseDate)
+		assert.Equal(t, wantPurchaseDate.AddDate(0, product.TermMonths, 0), h.MaturityDate)
 		letterRunes := []rune(h.TicketLetter)
 		require.Len(t, letterRunes, 1)
 		assert.True(t, letterRunes[0] >= 0x0E01 && letterRunes[0] <= 0x0E2E, "ticket letter %q out of the Thai consonant range", h.TicketLetter)
@@ -292,7 +306,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 		product := activeProduct() // unit price 100
 		products := newFakeProductRepo(product)
 		holdings := newFakeHoldingRepo()
-		svc := service.NewSalakService(products, holdings, &fakeAccountService{})
+		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, testClock())
 
 		h, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "250"))
 		require.NoError(t, err)
@@ -302,7 +316,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 	t.Run("amount below one unit price is rejected", func(t *testing.T) {
 		product := activeProduct() // unit price 100
 		products := newFakeProductRepo(product)
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "50"))
 		assertAppErrKind(t, err, apperror.KindValidation)
@@ -311,14 +325,14 @@ func TestSalakService_MintHolding(t *testing.T) {
 	t.Run("zero amount is rejected", func(t *testing.T) {
 		product := activeProduct()
 		products := newFakeProductRepo(product)
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, decimal.Zero)
 		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 
 	t.Run("product not found", func(t *testing.T) {
-		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, uuid.New(), mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -327,7 +341,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 	t.Run("product lookup error returns internal error", func(t *testing.T) {
 		products := newFakeProductRepo()
 		products.findByIDErr = errors.New("db down")
-		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{})
+		svc := service.NewSalakService(products, newFakeHoldingRepo(), &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, uuid.New(), mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -338,7 +352,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 		products := newFakeProductRepo(product)
 		holdings := newFakeHoldingRepo()
 		holdings.reserveErr = errors.New("lock timeout")
-		svc := service.NewSalakService(products, holdings, &fakeAccountService{})
+		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -349,7 +363,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 		products := newFakeProductRepo(product)
 		holdings := newFakeHoldingRepo()
 		holdings.createErr = errors.New("write failed")
-		svc := service.NewSalakService(products, holdings, &fakeAccountService{})
+		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, testClock())
 
 		_, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "100"))
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -367,7 +381,7 @@ func TestSalakService_ListHoldingsByAccount(t *testing.T) {
 		want := domain.Holding{ID: uuid.New(), AccountID: accountID}
 		holdings.byAccountID[accountID] = []domain.Holding{want}
 		accounts := &fakeAccountService{getByIDResult: accountdomain.Account{ID: accountID, UserID: userID}}
-		svc := service.NewSalakService(newFakeProductRepo(), holdings, accounts)
+		svc := service.NewSalakService(newFakeProductRepo(), holdings, accounts, testClock())
 
 		got, err := svc.ListHoldingsByAccount(context.Background(), userID, accountID)
 		require.NoError(t, err)
@@ -379,7 +393,7 @@ func TestSalakService_ListHoldingsByAccount(t *testing.T) {
 
 	t.Run("ownership check failure is propagated verbatim", func(t *testing.T) {
 		accounts := &fakeAccountService{getByIDErr: apperror.NotFound("account not found")}
-		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), accounts)
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), accounts, testClock())
 
 		_, err := svc.ListHoldingsByAccount(context.Background(), userID, accountID)
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -389,7 +403,7 @@ func TestSalakService_ListHoldingsByAccount(t *testing.T) {
 		holdings := newFakeHoldingRepo()
 		holdings.findByAccountErr = errors.New("db down")
 		accounts := &fakeAccountService{getByIDResult: accountdomain.Account{ID: accountID, UserID: userID}}
-		svc := service.NewSalakService(newFakeProductRepo(), holdings, accounts)
+		svc := service.NewSalakService(newFakeProductRepo(), holdings, accounts, testClock())
 
 		_, err := svc.ListHoldingsByAccount(context.Background(), userID, accountID)
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -397,7 +411,7 @@ func TestSalakService_ListHoldingsByAccount(t *testing.T) {
 
 	t.Run("no holdings returns an empty slice, not an error", func(t *testing.T) {
 		accounts := &fakeAccountService{getByIDResult: accountdomain.Account{ID: accountID, UserID: userID}}
-		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), accounts)
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), accounts, testClock())
 
 		got, err := svc.ListHoldingsByAccount(context.Background(), userID, accountID)
 		require.NoError(t, err)
