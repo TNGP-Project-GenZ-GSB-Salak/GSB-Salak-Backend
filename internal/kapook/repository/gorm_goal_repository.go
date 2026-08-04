@@ -51,3 +51,10 @@ func (r *GormGoalRepository) UpdateSavingAmount(ctx context.Context, tx *gorm.DB
 		Where("id = ?", goalID).
 		Update("saving_amount", newSavingAmount).Error
 }
+
+func (r *GormGoalRepository) UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Updates(map[string]interface{}{"salak_amount": newSalakAmount, "is_active": stillActive}).Error
+}

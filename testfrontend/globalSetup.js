@@ -11,13 +11,13 @@ module.exports = async function globalSetup() {
     "UPDATE account.accounts SET balance = 0 WHERE account_number = '4001000111'",
     "UPDATE account.accounts SET balance = 0 WHERE account_number = '5001000111'",
     "DELETE FROM transaction.ledger_entries",
+    // kapook_transactions references both kapook_goals(id) and, since ticket
+    // 08, salak.holdings(id) - with no cascade on either - so it must be
+    // deleted before both of those, not after.
+    "DELETE FROM kapook.kapook_transactions WHERE kapook_account_id = '44444444-4444-4444-4444-444444444444'",
     "DELETE FROM salak.holdings",
     "UPDATE salak.ticket_sequence SET next_ticket_number = 1 WHERE id = 1",
     "DELETE FROM kapook.terms_acceptances WHERE user_id = '11111111-1111-1111-1111-111111111111'",
-    // kapook_transactions.goal_id references kapook_goals(id) with no cascade,
-    // so transactions must go first or the goal delete hits a foreign-key
-    // violation.
-    "DELETE FROM kapook.kapook_transactions WHERE kapook_account_id = '44444444-4444-4444-4444-444444444444'",
     "DELETE FROM kapook.kapook_goals WHERE account_id = '44444444-4444-4444-4444-444444444444'",
   ].join("; ");
 

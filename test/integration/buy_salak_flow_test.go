@@ -192,3 +192,25 @@ func TestBuySalakFlow_BadgeSuppliedButNotOwned_RejectsBeforeAnyStateChanges(t *t
 	require.NoError(t, findErr)
 	assert.Empty(t, holdings, "no holding should have been persisted")
 }
+
+// TestBuySalakFlow_KapookFundingAccount_Rejected proves the public
+// BuySalak path stays closed to a kapook-type account even after ticket
+// 08 added BuySalakForKapook as a second door in on the same service - the
+// public endpoint's own funding-type check is untouched by that addition.
+func TestBuySalakFlow_KapookFundingAccount_Rejected(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+
+	user := mustCreateUser(t, tx, "")
+	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.RequireFromString("10000"))
+	salakAccount := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	buySvc, _ := newBuySalakService(tx)
+
+	_, err := buySvc.BuySalak(ctx, user.ID, kapookAcc.ID, salakAccount.ID, product.ID, nil, decimal.RequireFromString("2000"))
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, apperror.KindValidation, appErr.Kind)
+}

@@ -25,6 +25,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/kapook/goals/deposit", h.Deposit)
 	r.Post("/kapook/goals/withdraw", h.Withdraw)
 	r.Get("/kapook/goals/withdrawal-status", h.GetWithdrawalStatus)
+	r.Post("/kapook/goals/buy", h.BuyFromGoal)
 }
 
 // AcceptTerms godoc
@@ -232,4 +233,37 @@ func (h *Handler) GetWithdrawalStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.OK(w, http.StatusOK, toWithdrawalStatusResponse(status))
+}
+
+// BuyFromGoal godoc
+// @Summary      Buy Salak from a Kapook goal
+// @Description  Converts any 1,000-multiple amount up to the goal's available balance (saved minus already converted) into the goal's own product, gated on that balance being at least the product's minimum purchase. A purchase that fully satisfies the goal's target deactivates it; a partial one leaves it active.
+// @Tags         kapook
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body      buyFromGoalRequest  true  "Purchase details"
+// @Success      201      {object}  httpserver.DataEnvelope{data=buyFromGoalResponse}
+// @Failure      400      {object}  httpserver.ErrorEnvelope
+// @Failure      401      {object}  httpserver.ErrorEnvelope
+// @Failure      404      {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/kapook/goals/buy [post]
+func (h *Handler) BuyFromGoal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	var req buyFromGoalRequest
+	if err := httpserver.DecodeAndValidate(r, &req); err != nil {
+		httpserver.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.service.BuyFromGoal(r.Context(), userID, req.KapookAccountID, req.SalakAccountID, req.Amount)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusCreated, toBuyFromGoalResponse(result))
 }

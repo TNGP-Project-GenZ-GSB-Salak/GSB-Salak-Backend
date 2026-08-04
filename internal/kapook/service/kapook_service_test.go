@@ -13,6 +13,7 @@ import (
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
 	txdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/domain"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -60,15 +61,19 @@ func (f *fakeTermsRepo) HasAccepted(ctx context.Context, userID uuid.UUID) (bool
 
 // fakeGoalRepo is a hand-rolled implementation of kapook.GoalRepository.
 type fakeGoalRepo struct {
-	activeByAccount  map[uuid.UUID]kapookdomain.Goal
-	findErr          error
-	createErr        error
-	findForUpdateErr error
-	updateSavingErr  error
+	activeByAccount        map[uuid.UUID]kapookdomain.Goal
+	findErr                error
+	createErr              error
+	findForUpdateErr       error
+	updateSavingErr        error
+	updateAfterPurchaseErr error
 
-	lastCreated       *kapookdomain.Goal
-	lastUpdatedGoalID uuid.UUID
-	lastNewSaving     decimal.Decimal
+	lastCreated               *kapookdomain.Goal
+	lastUpdatedGoalID         uuid.UUID
+	lastNewSaving             decimal.Decimal
+	lastNewSalakAmount        decimal.Decimal
+	lastStillActive           bool
+	updateAfterPurchaseCalled bool
 }
 
 func newFakeGoalRepo() *fakeGoalRepo {
@@ -115,6 +120,24 @@ func (f *fakeGoalRepo) UpdateSavingAmount(ctx context.Context, tx *gorm.DB, goal
 	for accID, g := range f.activeByAccount {
 		if g.ID == goalID {
 			g.SavingAmount = newSavingAmount
+			f.activeByAccount[accID] = g
+		}
+	}
+	return nil
+}
+
+func (f *fakeGoalRepo) UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error {
+	f.updateAfterPurchaseCalled = true
+	f.lastUpdatedGoalID = goalID
+	f.lastNewSalakAmount = newSalakAmount
+	f.lastStillActive = stillActive
+	if f.updateAfterPurchaseErr != nil {
+		return f.updateAfterPurchaseErr
+	}
+	for accID, g := range f.activeByAccount {
+		if g.ID == goalID {
+			g.SalakAmount = newSalakAmount
+			g.IsActive = stillActive
 			f.activeByAccount[accID] = g
 		}
 	}
@@ -274,6 +297,37 @@ func (f *fakeTransactionRepo) CountByGoalAndTypesInWindow(ctx context.Context, t
 	return f.countResult, nil
 }
 
+// fakeBuySalakService is a hand-rolled implementation of transaction.Service,
+// only BuySalakForKapook is exercised by KapookService.BuyFromGoal.
+type fakeBuySalakService struct {
+	buySalakForKapookResult transaction.BuySalakReceipt
+	buySalakForKapookErr    error
+
+	lastKapookAccountID uuid.UUID
+	lastSalakAccountID  uuid.UUID
+	lastAmount          decimal.Decimal
+	callCount           int
+}
+
+func (f *fakeBuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, badgeID *uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
+	return transaction.BuySalakReceipt{}, nil
+}
+
+func (f *fakeBuySalakService) BuySalakForKapook(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
+	f.callCount++
+	f.lastKapookAccountID = kapookAccountID
+	f.lastSalakAccountID = salakAccountID
+	f.lastAmount = amount
+	if f.buySalakForKapookErr != nil {
+		return transaction.BuySalakReceipt{}, f.buySalakForKapookErr
+	}
+	return f.buySalakForKapookResult, nil
+}
+
+func (f *fakeBuySalakService) ListHistory(ctx context.Context, userID, accountID uuid.UUID, limit, offset int) ([]txdomain.LedgerEntry, error) {
+	return nil, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {
@@ -332,7 +386,7 @@ func newKapookService(terms *fakeTermsRepo, goals *fakeGoalRepo, salakSvc *fakeS
 }
 
 func newKapookServiceWithClock(terms *fakeTermsRepo, goals *fakeGoalRepo, salakSvc *fakeSalakService, accounts *fakeAccountService, clk clock.Clock) *service.KapookService {
-	return service.NewKapookService(terms, goals, salakSvc, accounts, nil, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clk)
+	return service.NewKapookService(terms, goals, salakSvc, accounts, nil, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clk, &fakeBuySalakService{})
 }
 
 // --- Accept / HasAccepted ---------------------------------------------------
@@ -629,7 +683,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, clock.Real{}, &fakeBuySalakService{})
 
 		got, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		require.NoError(t, err)
@@ -745,7 +799,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -769,7 +823,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("300"))
 		assertAppErrKind(t, err, apperror.KindValidation)
@@ -794,7 +848,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
 
 		got, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("200"))
 		require.NoError(t, err)
@@ -819,7 +873,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
@@ -841,7 +895,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, &fakeTransactionRepo{}, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -863,7 +917,7 @@ func TestKapookService_Deposit(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, transactions, clock.Real{})
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, transactions, clock.Real{}, &fakeBuySalakService{})
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindInternal)
@@ -909,7 +963,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, fixedClk, &fakeBuySalakService{})
 
 		result, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		require.NoError(t, err)
@@ -960,7 +1014,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, ledger, transactions, fixedClk, &fakeBuySalakService{})
 
 		result, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("1000"))
 		require.NoError(t, err)
@@ -1047,7 +1101,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk, &fakeBuySalakService{})
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindNotFound)
@@ -1068,9 +1122,34 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk, &fakeBuySalakService{})
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("301"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		assert.Empty(t, accounts.debitCalls, "must reject before debiting anything")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("balance available to withdraw excludes amount already converted to Salak", func(t *testing.T) {
+		kapookAccID, savingsAccID := uuid.New(), uuid.New()
+		goal := newGoal(kapookAccID, decimal.RequireFromString("3000"))
+		goal.SalakAmount = decimal.RequireFromString("2000") // only 1000 is still cash
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID:  kapookAccount(kapookAccID, userID),
+			savingsAccID: savingsAccount(savingsAccID, userID),
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk, &fakeBuySalakService{})
+
+		// 1500 is well within the raw SavingAmount (3000) but exceeds the
+		// 1000 actually still sitting as cash once SalakAmount is netted out.
+		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("1500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 		assert.Empty(t, accounts.debitCalls, "must reject before debiting anything")
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -1092,7 +1171,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk, &fakeBuySalakService{})
 
 		result, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		require.NoError(t, err)
@@ -1118,7 +1197,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 		mock.ExpectBegin()
 		mock.ExpectRollback()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, fixedClk, &fakeBuySalakService{})
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
@@ -1158,7 +1237,7 @@ func TestKapookService_GetWithdrawalStatus(t *testing.T) {
 		goals := newFakeGoalRepo()
 		goals.activeByAccount[kapookAccID] = goal
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, nil, &fakeLedgerRepo{}, &fakeTransactionRepo{countResult: 2}, fixedClk)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, nil, &fakeLedgerRepo{}, &fakeTransactionRepo{countResult: 2}, fixedClk, &fakeBuySalakService{})
 
 		status, err := svc.GetWithdrawalStatus(context.Background(), userID, kapookAccID)
 		require.NoError(t, err)
@@ -1182,5 +1261,274 @@ func TestKapookService_GetWithdrawalStatus(t *testing.T) {
 
 		_, err := svc.GetWithdrawalStatus(context.Background(), userID, uuid.New())
 		assertAppErrKind(t, err, apperror.KindNotFound)
+	})
+}
+
+// --- BuyFromGoal --------------------------------------------------------
+
+func TestKapookService_BuyFromGoal(t *testing.T) {
+	userID := uuid.New()
+
+	productFor := func(goalAmount decimal.Decimal) salakdomain.Product {
+		return salakdomain.Product{
+			ID:          uuid.New(),
+			MinPurchase: decimal.RequireFromString("1000"),
+			MaxPurchase: goalAmount,
+			StepAmount:  decimal.RequireFromString("1000"),
+		}
+	}
+
+	newGoalWithProduct := func(kapookAccID, productID uuid.UUID, saving, salak decimal.Decimal) kapookdomain.Goal {
+		return kapookdomain.Goal{
+			ID:           uuid.New(),
+			AccountID:    kapookAccID,
+			ProductID:    productID,
+			IsActive:     true,
+			GoalAmount:   decimal.RequireFromString("5000"),
+			SavingAmount: saving,
+			SalakAmount:  salak,
+		}
+	}
+
+	t.Run("partial purchase converts amount, leaves the goal active", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("3000"), decimal.Zero)
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product}
+		holdingID := uuid.New()
+		buySalakSvc := &fakeBuySalakService{buySalakForKapookResult: transaction.BuySalakReceipt{HoldingID: holdingID}}
+		transactions := &fakeTransactionRepo{}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc)
+
+		result, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("2000"))
+		require.NoError(t, err)
+
+		assert.False(t, result.GoalCompleted)
+		assert.True(t, result.Goal.IsActive)
+		assert.True(t, decimal.RequireFromString("2000").Equal(result.Goal.SalakAmount))
+		assert.True(t, decimal.RequireFromString("3000").Equal(result.Goal.SavingAmount), "SavingAmount is untouched by a purchase")
+		assert.Equal(t, holdingID, result.Receipt.HoldingID)
+
+		assert.Equal(t, 1, buySalakSvc.callCount)
+		assert.Equal(t, kapookAccID, buySalakSvc.lastKapookAccountID)
+		assert.Equal(t, salakAccID, buySalakSvc.lastSalakAccountID)
+		assert.True(t, decimal.RequireFromString("2000").Equal(buySalakSvc.lastAmount))
+
+		require.True(t, goals.updateAfterPurchaseCalled)
+		assert.True(t, goals.lastStillActive)
+		assert.True(t, decimal.RequireFromString("2000").Equal(goals.lastNewSalakAmount))
+
+		require.NotNil(t, transactions.lastCreated)
+		assert.Equal(t, kapookdomain.TransactionBuySalak, transactions.lastCreated.Type)
+		assert.Equal(t, goal.ID, transactions.lastCreated.GoalID)
+		require.NotNil(t, transactions.lastCreated.HoldingID)
+		assert.Equal(t, holdingID, *transactions.lastCreated.HoldingID)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("purchase that fully satisfies the target deactivates the goal", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("5000"), decimal.RequireFromString("3000"))
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product}
+		buySalakSvc := &fakeBuySalakService{buySalakForKapookResult: transaction.BuySalakReceipt{HoldingID: uuid.New()}}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, buySalakSvc)
+
+		result, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("2000"))
+		require.NoError(t, err)
+
+		assert.True(t, result.GoalCompleted)
+		assert.False(t, result.Goal.IsActive)
+		assert.True(t, decimal.RequireFromString("5000").Equal(result.Goal.SalakAmount))
+		assert.False(t, goals.lastStillActive)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("kapook and salak account must differ", func(t *testing.T) {
+		sameID := uuid.New()
+		accounts := &fakeAccountService{getByIDResult: kapookAccount(sameID, userID)}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, sameID, sameID, decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("kapook account ownership failure is propagated verbatim", func(t *testing.T) {
+		accounts := &fakeAccountService{getByIDErr: apperror.NotFound("account not found")}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, uuid.New(), uuid.New(), decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindNotFound)
+	})
+
+	t.Run("kapook account not of kapook type is rejected", func(t *testing.T) {
+		kapookAccID := uuid.New()
+		accounts := &fakeAccountService{getByIDResult: accountdomain.Account{ID: kapookAccID, UserID: userID, Type: accountdomain.TypeSavings}}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, uuid.New(), decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("salak account not of salak type is rejected", func(t *testing.T) {
+		kapookAccID, otherAccID := uuid.New(), uuid.New()
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			otherAccID:  {ID: otherAccID, UserID: userID, Type: accountdomain.TypeSavings},
+		}}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, otherAccID, decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("zero amount is rejected before any transaction opens", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.Zero)
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("no active goal returns not found", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), newFakeGoalRepo(), &fakeSalakService{}, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindNotFound)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("balance below the product minimum is rejected before calling BuySalakForKapook", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("500"), decimal.Zero)
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product}
+		buySalakSvc := &fakeBuySalakService{}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, buySalakSvc)
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("500"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		assert.Equal(t, 0, buySalakSvc.callCount)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("amount invalid for the product (ValidatePurchase) is rejected", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("3000"), decimal.Zero)
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product, validatePurchaseErr: apperror.Validation("amount must be a multiple of the step amount")}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, &fakeBuySalakService{})
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("1500"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("amount exceeding the available balance is rejected", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		// 3000 saved, 2000 already converted -> only 1000 still available.
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("3000"), decimal.RequireFromString("2000"))
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product}
+		buySalakSvc := &fakeBuySalakService{}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, buySalakSvc)
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("2000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		assert.Equal(t, 0, buySalakSvc.callCount)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("draw-day rejection from BuySalakForKapook rolls back and is propagated verbatim", func(t *testing.T) {
+		kapookAccID, salakAccID := uuid.New(), uuid.New()
+		product := productFor(decimal.RequireFromString("5000"))
+		goal := newGoalWithProduct(kapookAccID, product.ID, decimal.RequireFromString("3000"), decimal.Zero)
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+			salakAccID:  {ID: salakAccID, UserID: userID, Type: accountdomain.TypeSalak},
+		}}
+		goals := newFakeGoalRepo()
+		goals.activeByAccount[kapookAccID] = goal
+		salakSvc := &fakeSalakService{getProductResult: product}
+		buySalakSvc := &fakeBuySalakService{buySalakForKapookErr: apperror.Validation("salak: product is closed for purchases on this draw day")}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, db, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, buySalakSvc)
+
+		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

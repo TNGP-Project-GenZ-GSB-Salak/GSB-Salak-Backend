@@ -10,6 +10,7 @@ import (
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
+	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
 	txdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/domain"
 	"github.com/google/uuid"
@@ -45,22 +46,8 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 		return transaction.BuySalakReceipt{}, apperror.Validation("funding_account_id must reference a savings-type account")
 	}
 
-	salakAccount, err := s.accounts.GetByID(ctx, userID, salakAccountID)
+	salakAccount, product, err := s.validateSalakSideAndProduct(ctx, userID, salakAccountID, productID, amount)
 	if err != nil {
-		return transaction.BuySalakReceipt{}, err
-	}
-	if salakAccount.Type != accountdomain.TypeSalak {
-		return transaction.BuySalakReceipt{}, apperror.Validation("salak_account_id must reference a salak-type account")
-	}
-
-	product, err := s.salakSvc.GetProduct(ctx, productID)
-	if err != nil {
-		return transaction.BuySalakReceipt{}, err
-	}
-	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
-		return transaction.BuySalakReceipt{}, err
-	}
-	if err := s.salakSvc.EnsureNotDrawDay(ctx, product); err != nil {
 		return transaction.BuySalakReceipt{}, err
 	}
 
@@ -76,76 +63,137 @@ func (s *BuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID
 
 	var receipt transaction.BuySalakReceipt
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		fundingBalanceAfter, err := s.accounts.Debit(ctx, tx, fundingAccountID, amount)
-		if err != nil {
-			return err
-		}
-
-		holding, err := s.salakSvc.MintHolding(ctx, tx, salakAccountID, productID, amount)
-		if err != nil {
-			return err
-		}
-
-		salakBalanceAfter, err := s.accounts.Credit(ctx, tx, salakAccountID, amount)
-		if err != nil {
-			return err
-		}
-
-		refID := uuid.New()
-		now := s.clock.Now()
-		description := fmt.Sprintf("Buy %s", product.Name)
-
-		debitEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     fundingAccountID,
-			HoldingID:     &holding.ID,
-			Type:          txdomain.EntryDebit,
-			Amount:        amount,
-			BalanceAfter:  fundingBalanceAfter,
-			ReferenceType: "buy_salak",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-		creditEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     salakAccountID,
-			HoldingID:     &holding.ID,
-			Type:          txdomain.EntryCredit,
-			Amount:        amount,
-			BalanceAfter:  salakBalanceAfter,
-			ReferenceType: "buy_salak",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-
-		if err := s.ledgerRepo.Create(ctx, tx, debitEntry); err != nil {
-			return err
-		}
-		if err := s.ledgerRepo.Create(ctx, tx, creditEntry); err != nil {
-			return err
-		}
-
-		receipt = transaction.BuySalakReceipt{
-			ReferenceID:                refID,
-			ProductName:                product.Name,
-			Units:                      holding.Units,
-			TicketStart:                holding.TicketStartID(),
-			TicketEnd:                  holding.TicketEndID(),
-			Amount:                     amount,
-			FundingAccountBalanceAfter: fundingBalanceAfter,
-			SalakAccountBalanceAfter:   salakBalanceAfter,
-			PurchaseDate:               holding.PurchaseDate.Format("2006-01-02"),
-			MaturityDate:               holding.MaturityDate.Format("2006-01-02"),
-		}
-		return nil
+		receipt, err = s.mintAndSettle(ctx, tx, fundingAccountID, salakAccount.ID, productID, amount, product)
+		return err
 	})
 	if err != nil {
 		return transaction.BuySalakReceipt{}, err
 	}
 
 	return receipt, nil
+}
+
+// BuySalakForKapook is the kapook-only variant documented on transaction.Service.
+func (s *BuySalakService) BuySalakForKapook(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
+	if kapookAccountID == salakAccountID {
+		return transaction.BuySalakReceipt{}, apperror.Validation("funding account and salak account must be different")
+	}
+
+	kapookAccount, err := s.accounts.GetByID(ctx, userID, kapookAccountID)
+	if err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+	if kapookAccount.Type != accountdomain.TypeKapook {
+		return transaction.BuySalakReceipt{}, apperror.Validation("funding_account_id must reference a kapook-type account")
+	}
+
+	salakAccount, product, err := s.validateSalakSideAndProduct(ctx, userID, salakAccountID, productID, amount)
+	if err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+
+	return s.mintAndSettle(ctx, tx, kapookAccountID, salakAccount.ID, productID, amount, product)
+}
+
+// validateSalakSideAndProduct is the half of BuySalak/BuySalakForKapook's
+// pre-transaction validation that doesn't depend on which account type is
+// allowed to fund the purchase: the salak account itself, the product, its
+// purchase rules, and the draw-day guard.
+func (s *BuySalakService) validateSalakSideAndProduct(ctx context.Context, userID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (accountdomain.Account, salakdomain.Product, error) {
+	salakAccount, err := s.accounts.GetByID(ctx, userID, salakAccountID)
+	if err != nil {
+		return accountdomain.Account{}, salakdomain.Product{}, err
+	}
+	if salakAccount.Type != accountdomain.TypeSalak {
+		return accountdomain.Account{}, salakdomain.Product{}, apperror.Validation("salak_account_id must reference a salak-type account")
+	}
+
+	product, err := s.salakSvc.GetProduct(ctx, productID)
+	if err != nil {
+		return accountdomain.Account{}, salakdomain.Product{}, err
+	}
+	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
+		return accountdomain.Account{}, salakdomain.Product{}, err
+	}
+	if err := s.salakSvc.EnsureNotDrawDay(ctx, product); err != nil {
+		return accountdomain.Account{}, salakdomain.Product{}, err
+	}
+
+	return salakAccount, product, nil
+}
+
+// mintAndSettle is BuySalak/BuySalakForKapook's shared money-movement core:
+// debit the funding account, mint the holding, credit the salak account,
+// and write the one debit+credit ledger pair - always in that
+// debit-before-credit lock order, regardless of which account type funded
+// it. Callers own the enclosing transaction (BuySalak opens its own;
+// BuySalakForKapook is handed one by the kapook service), so this never
+// opens one itself.
+func (s *BuySalakService) mintAndSettle(ctx context.Context, tx *gorm.DB, fundingAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal, product salakdomain.Product) (transaction.BuySalakReceipt, error) {
+	fundingBalanceAfter, err := s.accounts.Debit(ctx, tx, fundingAccountID, amount)
+	if err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+
+	holding, err := s.salakSvc.MintHolding(ctx, tx, salakAccountID, productID, amount)
+	if err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+
+	salakBalanceAfter, err := s.accounts.Credit(ctx, tx, salakAccountID, amount)
+	if err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+
+	refID := uuid.New()
+	now := s.clock.Now()
+	description := fmt.Sprintf("Buy %s", product.Name)
+
+	debitEntry := &txdomain.LedgerEntry{
+		ID:            uuid.New(),
+		AccountID:     fundingAccountID,
+		HoldingID:     &holding.ID,
+		Type:          txdomain.EntryDebit,
+		Amount:        amount,
+		BalanceAfter:  fundingBalanceAfter,
+		ReferenceType: "buy_salak",
+		ReferenceID:   refID,
+		Description:   description,
+		CreatedAt:     now,
+	}
+	creditEntry := &txdomain.LedgerEntry{
+		ID:            uuid.New(),
+		AccountID:     salakAccountID,
+		HoldingID:     &holding.ID,
+		Type:          txdomain.EntryCredit,
+		Amount:        amount,
+		BalanceAfter:  salakBalanceAfter,
+		ReferenceType: "buy_salak",
+		ReferenceID:   refID,
+		Description:   description,
+		CreatedAt:     now,
+	}
+
+	if err := s.ledgerRepo.Create(ctx, tx, debitEntry); err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+	if err := s.ledgerRepo.Create(ctx, tx, creditEntry); err != nil {
+		return transaction.BuySalakReceipt{}, err
+	}
+
+	return transaction.BuySalakReceipt{
+		ReferenceID:                refID,
+		HoldingID:                  holding.ID,
+		ProductName:                product.Name,
+		Units:                      holding.Units,
+		TicketStart:                holding.TicketStartID(),
+		TicketEnd:                  holding.TicketEndID(),
+		Amount:                     amount,
+		FundingAccountBalanceAfter: fundingBalanceAfter,
+		SalakAccountBalanceAfter:   salakBalanceAfter,
+		PurchaseDate:               holding.PurchaseDate.Format("2006-01-02"),
+		MaturityDate:               holding.MaturityDate.Format("2006-01-02"),
+	}, nil
 }
 
 func (s *BuySalakService) ListHistory(ctx context.Context, userID, accountID uuid.UUID, limit, offset int) ([]txdomain.LedgerEntry, error) {

@@ -92,3 +92,38 @@ func toWithdrawalStatusResponse(s kapook.WithdrawalStatus) withdrawalStatusRespo
 		NextWithdrawalIsFree:     s.NextWithdrawalIsFree,
 	}
 }
+
+type buyFromGoalRequest struct {
+	KapookAccountID uuid.UUID       `json:"kapook_account_id" validate:"required"`
+	SalakAccountID  uuid.UUID       `json:"salak_account_id" validate:"required"`
+	Amount          decimal.Decimal `json:"amount" validate:"required"`
+}
+
+type buyFromGoalResponse struct {
+	Goal          goalResponse    `json:"goal"`
+	GoalCompleted bool            `json:"goal_completed"`
+	ReferenceID   uuid.UUID       `json:"reference_id"`
+	ProductName   string          `json:"product_name"`
+	Units         int64           `json:"units"`
+	TicketStart   string          `json:"ticket_start"`
+	TicketEnd     string          `json:"ticket_end"`
+	Amount        decimal.Decimal `json:"amount"`
+	PurchaseDate  string          `json:"purchase_date"`
+	MaturityDate  string          `json:"maturity_date"`
+}
+
+func toBuyFromGoalResponse(r kapook.BuyFromGoalResult) buyFromGoalResponse {
+	receipt := r.Receipt
+	return buyFromGoalResponse{
+		Goal:          toGoalResponse(r.Goal),
+		GoalCompleted: r.GoalCompleted,
+		ReferenceID:   receipt.ReferenceID,
+		ProductName:   receipt.ProductName,
+		Units:         receipt.Units,
+		TicketStart:   receipt.TicketStart,
+		TicketEnd:     receipt.TicketEnd,
+		Amount:        receipt.Amount,
+		PurchaseDate:  receipt.PurchaseDate,
+		MaturityDate:  receipt.MaturityDate,
+	}
+}

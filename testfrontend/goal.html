@@ -50,6 +50,20 @@
       <button type="submit" data-testid="withdraw-submit">Withdraw</button>
     </form>
     <p id="withdraw-result" class="hidden" data-testid="withdraw-result"></p>
+
+    <h3>Buy Salak from this goal</h3>
+    <form id="buy-form" data-testid="buy-form">
+      <label>
+        Into Salak account
+        <select name="salak_account_id" data-testid="buy-salak-account-select" required></select>
+      </label>
+      <label>
+        Amount (THB)
+        <input name="amount" type="number" step="1000" data-testid="buy-amount-input" required />
+      </label>
+      <button type="submit" data-testid="buy-submit">Buy Salak</button>
+    </form>
+    <p id="buy-result" class="hidden" data-testid="buy-result"></p>
   </section>
 
   <section id="goal-form-section" data-testid="goal-form-section">
@@ -83,6 +97,9 @@
     const withdrawSavingsAccountSelect = document.querySelector('[data-testid="withdraw-savings-account-select"]');
     const withdrawalStatusEl = document.querySelector('[data-testid="withdrawal-status"]');
     const withdrawResultEl = document.getElementById("withdraw-result");
+    const buyForm = document.getElementById("buy-form");
+    const buySalakAccountSelect = document.querySelector('[data-testid="buy-salak-account-select"]');
+    const buyResultEl = document.getElementById("buy-result");
     const message = document.getElementById("message");
 
     let kapookAccountId = null;
@@ -126,6 +143,9 @@
       for (const a of accounts.filter((a) => a.type === "savings")) {
         savingsAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
         withdrawSavingsAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
+      }
+      for (const a of accounts.filter((a) => a.type === "salak")) {
+        buySalakAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
       }
 
       await loadProducts();
@@ -200,6 +220,31 @@
           : `Withdrawn ${result.amount} THB, no fee - ${result.net_credited} THB reached savings.`;
         withdrawResultEl.classList.remove("hidden");
         withdrawForm.reset();
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+
+    buyForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+      buyResultEl.classList.add("hidden");
+
+      const formData = new FormData(buyForm);
+      try {
+        const result = await apiFetch("/kapook/goals/buy", {
+          method: "POST",
+          body: JSON.stringify({
+            kapook_account_id: kapookAccountId,
+            salak_account_id: formData.get("salak_account_id"),
+            amount: Number(formData.get("amount")),
+          }),
+        });
+        renderGoal(result.goal);
+        buyResultEl.textContent = `Bought ${result.amount} THB of ${result.product_name} - tickets ${result.ticket_start} to ${result.ticket_end}.` +
+          (result.goal_completed ? " Goal fully converted and closed." : "");
+        buyResultEl.classList.remove("hidden");
+        buyForm.reset();
       } catch (err) {
         showError(message, err);
       }

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -33,6 +34,11 @@ type GoalRepository interface {
 	// tx and must not fall back to an ambient handle.
 	FindActiveByAccountIDForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Goal, error)
 	UpdateSavingAmount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal) error
+	// UpdateAfterPurchase records a purchase's effect on the goal: SalakAmount
+	// grows to newSalakAmount (SavingAmount is untouched - see
+	// domain.Goal.AvailableBalance), and IsActive is set to stillActive
+	// (false only once a purchase fully satisfies GoalAmount).
+	UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error
 }
 
 // TransactionRepository owns the kapook_transactions ledger of movements
@@ -75,6 +81,15 @@ type WithdrawResult struct {
 	NetCredited decimal.Decimal
 }
 
+// BuyFromGoalResult is what BuyFromGoal actually did. GoalCompleted mirrors
+// !Goal.IsActive - kept as its own field so a caller doesn't have to infer
+// "this purchase was the one that finished it" from state alone.
+type BuyFromGoalResult struct {
+	Goal          domain.Goal
+	Receipt       transaction.BuySalakReceipt
+	GoalCompleted bool
+}
+
 // Service is the public surface the http layer depends on.
 type Service interface {
 	Accept(ctx context.Context, userID uuid.UUID) error
@@ -103,4 +118,10 @@ type Service interface {
 	// customer before they commit. Returns apperror.NotFound if
 	// kapookAccountID has no active goal.
 	GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID) (WithdrawalStatus, error)
+	// BuyFromGoal converts amount of the active goal's available balance
+	// (SavingAmount minus SalakAmount) into the goal's own product, gated on
+	// that balance being at least the product's minimum purchase and amount
+	// being a valid step/max amount for it. A purchase that fully satisfies
+	// GoalAmount deactivates the goal; a partial one leaves it active.
+	BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (BuyFromGoalResult, error)
 }

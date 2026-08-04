@@ -86,7 +86,7 @@ func main() {
 	salakService := salaksvc.NewSalakService(productRepository, holdingRepository, accountService, drawDateRepository, clk)
 	badgeService := badgesvc.NewBadgeService(badgeRepository)
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService, clk)
-	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService, gdb, ledgerRepository, kapookTransactionRepository, clk)
+	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService, gdb, ledgerRepository, kapookTransactionRepository, clk, buySalakService)
 
 	if activeProducts, err := productRepository.ListActive(context.Background()); err != nil {
 		log.Printf("WARNING: failed to check draw-date calendar coverage: %v", err)

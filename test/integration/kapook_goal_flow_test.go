@@ -9,6 +9,8 @@ import (
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
 	accountservice "github.com/ciaabcdefg/gsb-salak-backend/internal/account/service"
+	badgerepo "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/repository"
+	badgeservice "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
 	kapookrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/repository"
 	kapookservice "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/service"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
@@ -16,6 +18,7 @@ import (
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
+	txservice "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/service"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +29,9 @@ import (
 // way cmd/api/main.go does, with every repo constructed on the given tx
 // (including the service's own s.db.Transaction call, which GORM turns into
 // a SAVEPOINT since tx is already inside an open transaction - the same
-// technique newBuySalakService in buy_salak_flow_test.go uses).
+// technique newBuySalakService in buy_salak_flow_test.go uses). Also wires
+// a real BuySalakService, needed since ticket 08 has KapookService call its
+// BuySalakForKapook rather than orchestrating the mint/ledger flow itself.
 func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.GormTermsRepository) {
 	accountSvc := accountservice.NewAccountService(accountrepo.NewGormAccountRepository(tx))
 	salakSvc := salakservice.NewSalakService(
@@ -40,7 +45,9 @@ func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.Go
 	goalRepo := kapookrepo.NewGormGoalRepository(tx)
 	ledgerRepo := txrepo.NewGormLedgerRepository(tx)
 	transactionRepo := kapookrepo.NewGormTransactionRepository(tx)
-	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo, clock.Real{}), termsRepo
+	badgeSvc := badgeservice.NewBadgeService(badgerepo.NewGormBadgeRepository(tx))
+	buySalakSvc := txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepo, badgeSvc, clock.Real{})
+	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc), termsRepo
 }
 
 func TestKapookGoalFlow_HappyPath_CreatesAndReadsBackActiveGoal(t *testing.T) {

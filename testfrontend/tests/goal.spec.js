@@ -1,7 +1,7 @@
 const { test, expect } = require("@playwright/test");
 const { createShooter } = require("./helpers/screenshot");
 const { loginAsDemo } = require("./helpers/auth");
-const { SAVINGS_ACCOUNT_ID } = require("./helpers/fixtures");
+const { SAVINGS_ACCOUNT_ID, SALAK_ACCOUNT_ID } = require("./helpers/fixtures");
 
 test.describe("kapook goal", () => {
   test("creating a goal shows it with progress, and it persists across reload", async ({ page }) => {
@@ -178,5 +178,43 @@ test.describe("kapook goal", () => {
     await expect(page.getByTestId("goal-view")).toBeVisible();
     await expect(page.getByTestId("goal-form-section")).toBeHidden();
     await expect(page.getByTestId("goal-saved")).toHaveText("0");
+  });
+
+  test("buying Salak from the goal shows the resulting holding's ticket range, and a partial purchase leaves the goal active", async ({ page }) => {
+    const shoot = createShooter("goal", "buy-from-goal");
+
+    await loginAsDemo(page);
+    await page.goto("/goal.html");
+
+    // Continues from the withdraw test: goal target 5000, saved emptied to
+    // 0. Deposit again so there's something to convert.
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    await page.getByTestId("savings-account-select").selectOption(SAVINGS_ACCOUNT_ID);
+    await page.getByTestId("deposit-amount-input").fill("2000");
+    await page.getByTestId("deposit-submit").click();
+    await expect(page.getByTestId("goal-saved")).toHaveText("2000");
+    await shoot(page, "deposited-again");
+
+    await page.getByTestId("buy-salak-account-select").selectOption(SALAK_ACCOUNT_ID);
+    await page.getByTestId("buy-amount-input").fill("1000");
+    await shoot(page, "buy-form-filled");
+
+    await page.getByTestId("buy-submit").click();
+
+    // SavingAmount is untouched by a purchase - only SalakAmount grows.
+    await expect(page.getByTestId("goal-saved")).toHaveText("2000");
+    await expect(page.getByTestId("goal-converted")).toHaveText("1000");
+    const buyResult = page.getByTestId("buy-result");
+    await expect(buyResult).toHaveText(/Bought 1000 THB of .+ - tickets .+ to .+\./i);
+    await shoot(page, "partial-purchase-holding-shown");
+
+    // The holding actually landed in the salak account's holdings list.
+    const holdings = await page.evaluate((accountId) => apiFetch(`/salak/holdings?account_id=${accountId}`), SALAK_ACCOUNT_ID);
+    expect(holdings.length).toBeGreaterThan(0);
+
+    await page.reload();
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    await expect(page.getByTestId("goal-form-section")).toBeHidden();
+    await expect(page.getByTestId("goal-converted")).toHaveText("1000");
   });
 });

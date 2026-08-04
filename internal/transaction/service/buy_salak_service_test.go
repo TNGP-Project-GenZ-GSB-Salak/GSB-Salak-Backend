@@ -212,6 +212,10 @@ func salakAccount(id uuid.UUID) accountdomain.Account {
 	return accountdomain.Account{ID: id, Type: accountdomain.TypeSalak, Balance: decimal.Zero}
 }
 
+func kapookAccount(id uuid.UUID) accountdomain.Account {
+	return accountdomain.Account{ID: id, Type: accountdomain.TypeKapook, Balance: decimal.RequireFromString("1000")}
+}
+
 func activeProduct() salakdomain.Product {
 	return salakdomain.Product{
 		ID:         uuid.New(),
@@ -507,6 +511,109 @@ func TestBuySalakService_BuySalak(t *testing.T) {
 		_, err := svc.BuySalak(context.Background(), userID, fundingID, salakID, productID, nil, mustDecimal(t, "500"))
 		assert.Error(t, err)
 		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+// --- BuySalakForKapook ------------------------------------------------------
+
+func TestBuySalakService_BuySalakForKapook(t *testing.T) {
+	userID := uuid.New()
+
+	t.Run("kapook and salak account must differ", func(t *testing.T) {
+		accountID := uuid.New()
+		accounts := newFakeAccountService()
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{}, testClock())
+
+		_, err := svc.BuySalakForKapook(context.Background(), nil, userID, accountID, accountID, uuid.New(), mustDecimal(t, "1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("funding account must be kapook-type, not savings", func(t *testing.T) {
+		fundingID, salakID := uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[fundingID] = savingsAccount(fundingID)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{}, testClock())
+
+		_, err := svc.BuySalakForKapook(context.Background(), nil, userID, fundingID, salakID, uuid.New(), mustDecimal(t, "1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("salak account must be salak-type", func(t *testing.T) {
+		kapookID, otherID := uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[kapookID] = kapookAccount(kapookID)
+		accounts.accounts[otherID] = savingsAccount(otherID)
+		svc := service.NewBuySalakService(nil, accounts, &fakeSalakService{}, &fakeLedgerRepo{}, &fakeBadgeService{}, testClock())
+
+		_, err := svc.BuySalakForKapook(context.Background(), nil, userID, kapookID, otherID, uuid.New(), mustDecimal(t, "1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
+	t.Run("draw day is rejected", func(t *testing.T) {
+		kapookID, salakID := uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[kapookID] = kapookAccount(kapookID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+		salakSvc := &fakeSalakService{getProductResult: activeProduct(), ensureNotDrawDayErr: salak.ErrDrawDay}
+
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{}, testClock())
+
+		_, err := svc.BuySalakForKapook(context.Background(), nil, userID, kapookID, salakID, uuid.New(), mustDecimal(t, "1000"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, salak.ErrDrawDay)
+	})
+
+	t.Run("success debits the kapook account, mints, credits the salak account, and writes one ledger pair", func(t *testing.T) {
+		kapookID, salakID, productID := uuid.New(), uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[kapookID] = kapookAccount(kapookID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+		accounts.debitResult = mustDecimal(t, "0")
+		accounts.creditResult = mustDecimal(t, "1000")
+
+		product := activeProduct()
+		holding := salakdomain.Holding{ID: uuid.New(), Units: 10, TicketStart: 2000, TicketEnd: 2009}
+		salakSvc := &fakeSalakService{getProductResult: product, mintHoldingResult: holding}
+		ledger := &fakeLedgerRepo{}
+
+		// BuySalakForKapook runs inside a caller-supplied tx rather than
+		// opening its own - service.db stays nil here, so if the
+		// implementation ever regressed to calling s.db.Transaction
+		// internally, this would panic on a nil pointer instead of
+		// silently passing.
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, ledger, &fakeBadgeService{}, testClock())
+
+		receipt, err := svc.BuySalakForKapook(context.Background(), nil, userID, kapookID, salakID, productID, mustDecimal(t, "1000"))
+		require.NoError(t, err)
+
+		assert.Equal(t, holding.ID, receipt.HoldingID)
+		assert.True(t, mustDecimal(t, "1000").Equal(receipt.Amount))
+
+		require.Len(t, accounts.debitCalls, 1)
+		assert.True(t, mustDecimal(t, "1000").Equal(accounts.debitCalls[0]))
+		require.Len(t, accounts.creditCalls, 1)
+		assert.True(t, mustDecimal(t, "1000").Equal(accounts.creditCalls[0]))
+
+		require.Len(t, ledger.created, 2, "exactly one debit+credit pair - no second pair")
+		debitEntry, creditEntry := ledger.created[0], ledger.created[1]
+		assert.Equal(t, kapookID, debitEntry.AccountID)
+		assert.Equal(t, salakID, creditEntry.AccountID)
+		assert.Equal(t, debitEntry.ReferenceID, creditEntry.ReferenceID)
+	})
+
+	t.Run("debit failure is propagated verbatim, before minting", func(t *testing.T) {
+		kapookID, salakID, productID := uuid.New(), uuid.New(), uuid.New()
+		accounts := newFakeAccountService()
+		accounts.accounts[kapookID] = kapookAccount(kapookID)
+		accounts.accounts[salakID] = salakAccount(salakID)
+		accounts.debitErr = apperror.Validation("insufficient funds")
+
+		salakSvc := &fakeSalakService{getProductResult: activeProduct()}
+
+		svc := service.NewBuySalakService(nil, accounts, salakSvc, &fakeLedgerRepo{}, &fakeBadgeService{}, testClock())
+
+		_, err := svc.BuySalakForKapook(context.Background(), nil, userID, kapookID, salakID, productID, mustDecimal(t, "1000"))
+		assertAppErrKind(t, err, apperror.KindValidation)
 	})
 }
 

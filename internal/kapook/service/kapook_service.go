@@ -50,10 +50,11 @@ type KapookService struct {
 	ledgerRepo   transaction.LedgerRepository
 	transactions kapook.TransactionRepository
 	clk          clock.Clock
+	buySalakSvc  transaction.Service
 }
 
-func NewKapookService(terms kapook.TermsRepository, goals kapook.GoalRepository, salakSvc salak.Service, accounts account.Service, db *gorm.DB, ledgerRepo transaction.LedgerRepository, transactions kapook.TransactionRepository, clk clock.Clock) *KapookService {
-	return &KapookService{terms: terms, goals: goals, salakSvc: salakSvc, accounts: accounts, db: db, ledgerRepo: ledgerRepo, transactions: transactions, clk: clk}
+func NewKapookService(terms kapook.TermsRepository, goals kapook.GoalRepository, salakSvc salak.Service, accounts account.Service, db *gorm.DB, ledgerRepo transaction.LedgerRepository, transactions kapook.TransactionRepository, clk clock.Clock, buySalakSvc transaction.Service) *KapookService {
+	return &KapookService{terms: terms, goals: goals, salakSvc: salakSvc, accounts: accounts, db: db, ledgerRepo: ledgerRepo, transactions: transactions, clk: clk, buySalakSvc: buySalakSvc}
 }
 
 var _ kapook.Service = (*KapookService)(nil)
@@ -367,7 +368,7 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 			return apperror.Internal("failed to lock active goal", err)
 		}
 
-		if amount.GreaterThan(goal.SavingAmount) {
+		if amount.GreaterThan(goal.AvailableBalance()) {
 			return apperror.Validation("withdrawal amount exceeds the kapook balance")
 		}
 
@@ -469,6 +470,97 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 	})
 	if err != nil {
 		return kapook.WithdrawResult{}, err
+	}
+
+	return result, nil
+}
+
+// BuyFromGoal converts amount of the active goal's AvailableBalance into
+// its own product, via transaction.Service.BuySalakForKapook - the same
+// debit/mint/credit/ledger-pair core the public buy-salak endpoint uses,
+// just funded from the kapook account instead of a savings one. It writes
+// no ledger pair of its own; the one BuySalakForKapook writes is the whole
+// record. SavingAmount is untouched here (see domain.Goal.AvailableBalance);
+// only SalakAmount grows, and only a purchase that fully satisfies
+// GoalAmount deactivates the goal.
+func (s *KapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
+	if kapookAccountID == salakAccountID {
+		return kapook.BuyFromGoalResult{}, apperror.Validation("kapook_account_id and salak_account_id must be different")
+	}
+
+	if _, err := s.kapookAccount(ctx, userID, kapookAccountID); err != nil {
+		return kapook.BuyFromGoalResult{}, err
+	}
+
+	salakAcc, err := s.accounts.GetByID(ctx, userID, salakAccountID)
+	if err != nil {
+		return kapook.BuyFromGoalResult{}, err
+	}
+	if salakAcc.Type != accountdomain.TypeSalak {
+		return kapook.BuyFromGoalResult{}, apperror.Validation("salak_account_id must reference a salak-type account")
+	}
+
+	if amount.LessThanOrEqual(decimal.Zero) {
+		return kapook.BuyFromGoalResult{}, apperror.Validation("amount must be greater than zero")
+	}
+
+	var result kapook.BuyFromGoalResult
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		goal, err := s.goals.FindActiveByAccountIDForUpdate(ctx, tx, kapookAccountID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return apperror.NotFound("no active goal for this account")
+		}
+		if err != nil {
+			return apperror.Internal("failed to lock active goal", err)
+		}
+
+		product, err := s.salakSvc.GetProduct(ctx, goal.ProductID)
+		if err != nil {
+			return err
+		}
+
+		available := goal.AvailableBalance()
+		if available.LessThan(product.MinPurchase) {
+			return apperror.Validation("kapook balance must be at least the product's minimum purchase amount to buy Salak")
+		}
+		if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
+			return err
+		}
+		if amount.GreaterThan(available) {
+			return apperror.Validation("amount exceeds the kapook balance")
+		}
+
+		receipt, err := s.buySalakSvc.BuySalakForKapook(ctx, tx, userID, kapookAccountID, salakAccountID, goal.ProductID, amount)
+		if err != nil {
+			return err
+		}
+
+		newSalakAmount := goal.SalakAmount.Add(amount)
+		goalCompleted := !newSalakAmount.LessThan(goal.GoalAmount)
+		if err := s.goals.UpdateAfterPurchase(ctx, tx, goal.ID, newSalakAmount, !goalCompleted); err != nil {
+			return apperror.Internal("failed to update goal after purchase", err)
+		}
+
+		holdingID := receipt.HoldingID
+		kapookTx := &domain.Transaction{
+			ID:              uuid.New(),
+			Type:            domain.TransactionBuySalak,
+			Amount:          amount,
+			KapookAccountID: kapookAccountID,
+			GoalID:          goal.ID,
+			HoldingID:       &holdingID,
+		}
+		if err := s.transactions.Create(ctx, tx, kapookTx); err != nil {
+			return apperror.Internal("failed to record kapook transaction", err)
+		}
+
+		goal.SalakAmount = newSalakAmount
+		goal.IsActive = !goalCompleted
+		result = kapook.BuyFromGoalResult{Goal: goal, Receipt: receipt, GoalCompleted: goalCompleted}
+		return nil
+	})
+	if err != nil {
+		return kapook.BuyFromGoalResult{}, err
 	}
 
 	return result, nil
