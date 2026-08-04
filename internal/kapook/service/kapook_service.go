@@ -59,6 +59,76 @@ func NewKapookService(terms kapook.TermsRepository, goals kapook.GoalRepository,
 
 var _ kapook.Service = (*KapookService)(nil)
 
+// kapookLedgerPairInput is what Deposit and Withdraw both need to record a
+// movement: a kapook_transaction row plus its debit+credit LedgerEntry
+// pair sharing one reference_id. The two differ only in which account is
+// debited vs credited and by how much (a fee-charged withdrawal debits the
+// full pre-fee Amount from the kapook side but credits less to savings),
+// not in the shape of what gets written.
+type kapookLedgerPairInput struct {
+	Type               domain.TransactionType
+	KapookAccountID    uuid.UUID
+	SavingsAccountID   uuid.UUID
+	GoalID             uuid.UUID
+	Amount             decimal.Decimal // stored on kapook_transactions.amount - always the pre-fee figure
+	DebitAccountID     uuid.UUID
+	DebitAmount        decimal.Decimal
+	DebitBalanceAfter  decimal.Decimal
+	CreditAccountID    uuid.UUID
+	CreditAmount       decimal.Decimal
+	CreditBalanceAfter decimal.Decimal
+	Description        string
+	Now                time.Time
+}
+
+// recordKapookLedgerPair writes in's kapook_transaction row and its
+// debit+credit LedgerEntry pair. Callers have already performed the actual
+// Debit/Credit account-balance calls; this only records what happened.
+func (s *KapookService) recordKapookLedgerPair(ctx context.Context, tx *gorm.DB, in kapookLedgerPairInput) error {
+	refID := uuid.New()
+	kapookTx := &domain.Transaction{
+		ID:               refID,
+		Type:             in.Type,
+		Amount:           in.Amount,
+		KapookAccountID:  in.KapookAccountID,
+		GoalID:           in.GoalID,
+		SavingsAccountID: &in.SavingsAccountID,
+	}
+	if err := s.transactions.Create(ctx, tx, kapookTx); err != nil {
+		return apperror.Internal("failed to record kapook transaction", err)
+	}
+
+	debitEntry := &txdomain.LedgerEntry{
+		ID:            uuid.New(),
+		AccountID:     in.DebitAccountID,
+		Type:          txdomain.EntryDebit,
+		Amount:        in.DebitAmount,
+		BalanceAfter:  in.DebitBalanceAfter,
+		ReferenceType: "kapook_transaction",
+		ReferenceID:   refID,
+		Description:   in.Description,
+		CreatedAt:     in.Now,
+	}
+	creditEntry := &txdomain.LedgerEntry{
+		ID:            uuid.New(),
+		AccountID:     in.CreditAccountID,
+		Type:          txdomain.EntryCredit,
+		Amount:        in.CreditAmount,
+		BalanceAfter:  in.CreditBalanceAfter,
+		ReferenceType: "kapook_transaction",
+		ReferenceID:   refID,
+		Description:   in.Description,
+		CreatedAt:     in.Now,
+	}
+	if err := s.ledgerRepo.Create(ctx, tx, debitEntry); err != nil {
+		return apperror.Internal("failed to write ledger entry", err)
+	}
+	if err := s.ledgerRepo.Create(ctx, tx, creditEntry); err != nil {
+		return apperror.Internal("failed to write ledger entry", err)
+	}
+	return nil
+}
+
 func (s *KapookService) Accept(ctx context.Context, userID uuid.UUID) error {
 	if err := s.terms.Accept(ctx, userID); err != nil {
 		return apperror.Internal("failed to record terms acceptance", err)
@@ -240,47 +310,22 @@ func (s *KapookService) Deposit(ctx context.Context, userID, kapookAccountID, sa
 		// The kapook_transaction's own id doubles as the ledger pair's
 		// shared reference_id - reference_type/reference_id carry no
 		// CHECK/FK, so this needs no ledger migration.
-		refID := uuid.New()
-		kapookTx := &domain.Transaction{
-			ID:               refID,
-			Type:             domain.TransactionDeposit,
-			Amount:           amount,
-			KapookAccountID:  kapookAccountID,
-			GoalID:           goal.ID,
-			SavingsAccountID: &savingsAccountID,
-		}
-		if err := s.transactions.Create(ctx, tx, kapookTx); err != nil {
-			return apperror.Internal("failed to record kapook transaction", err)
-		}
-
-		description := "Kapook deposit"
-		debitEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     savingsAccountID,
-			Type:          txdomain.EntryDebit,
-			Amount:        amount,
-			BalanceAfter:  savingsBalanceAfter,
-			ReferenceType: "kapook_transaction",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-		creditEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     kapookAccountID,
-			Type:          txdomain.EntryCredit,
-			Amount:        amount,
-			BalanceAfter:  kapookBalanceAfter,
-			ReferenceType: "kapook_transaction",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-		if err := s.ledgerRepo.Create(ctx, tx, debitEntry); err != nil {
-			return apperror.Internal("failed to write ledger entry", err)
-		}
-		if err := s.ledgerRepo.Create(ctx, tx, creditEntry); err != nil {
-			return apperror.Internal("failed to write ledger entry", err)
+		if err := s.recordKapookLedgerPair(ctx, tx, kapookLedgerPairInput{
+			Type:               domain.TransactionDeposit,
+			KapookAccountID:    kapookAccountID,
+			SavingsAccountID:   savingsAccountID,
+			GoalID:             goal.ID,
+			Amount:             amount,
+			DebitAccountID:     savingsAccountID,
+			DebitAmount:        amount,
+			DebitBalanceAfter:  savingsBalanceAfter,
+			CreditAccountID:    kapookAccountID,
+			CreditAmount:       amount,
+			CreditBalanceAfter: kapookBalanceAfter,
+			Description:        "Kapook deposit",
+			Now:                now,
+		}); err != nil {
+			return err
 		}
 
 		goal.SavingAmount = newSavingAmount
@@ -439,51 +484,26 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 			txType = domain.TransactionWithdrawWithFee
 		}
 
-		refID := uuid.New()
-		now := s.clk.Now()
-		kapookTx := &domain.Transaction{
-			ID:               refID,
-			Type:             txType,
-			Amount:           amount,
-			KapookAccountID:  kapookAccountID,
-			GoalID:           goal.ID,
-			SavingsAccountID: &savingsAccountID,
-		}
-		if err := s.transactions.Create(ctx, tx, kapookTx); err != nil {
-			return apperror.Internal("failed to record kapook transaction", err)
-		}
-
 		description := "Kapook withdrawal"
 		if feeCharged {
 			description = "Kapook withdrawal (2% fee)"
 		}
-		debitEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     kapookAccountID,
-			Type:          txdomain.EntryDebit,
-			Amount:        amount,
-			BalanceAfter:  kapookBalanceAfter,
-			ReferenceType: "kapook_transaction",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-		creditEntry := &txdomain.LedgerEntry{
-			ID:            uuid.New(),
-			AccountID:     savingsAccountID,
-			Type:          txdomain.EntryCredit,
-			Amount:        netCredited,
-			BalanceAfter:  savingsBalanceAfter,
-			ReferenceType: "kapook_transaction",
-			ReferenceID:   refID,
-			Description:   description,
-			CreatedAt:     now,
-		}
-		if err := s.ledgerRepo.Create(ctx, tx, debitEntry); err != nil {
-			return apperror.Internal("failed to write ledger entry", err)
-		}
-		if err := s.ledgerRepo.Create(ctx, tx, creditEntry); err != nil {
-			return apperror.Internal("failed to write ledger entry", err)
+		if err := s.recordKapookLedgerPair(ctx, tx, kapookLedgerPairInput{
+			Type:               txType,
+			KapookAccountID:    kapookAccountID,
+			SavingsAccountID:   savingsAccountID,
+			GoalID:             goal.ID,
+			Amount:             amount,
+			DebitAccountID:     kapookAccountID,
+			DebitAmount:        amount,
+			DebitBalanceAfter:  kapookBalanceAfter,
+			CreditAccountID:    savingsAccountID,
+			CreditAmount:       netCredited,
+			CreditBalanceAfter: savingsBalanceAfter,
+			Description:        description,
+			Now:                s.clk.Now(),
+		}); err != nil {
+			return err
 		}
 
 		goal.SavingAmount = newSavingAmount

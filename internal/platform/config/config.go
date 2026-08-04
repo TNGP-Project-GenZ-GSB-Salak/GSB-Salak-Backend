@@ -39,12 +39,6 @@ type Config struct {
 	JWTSecret     string
 	JWTExpiryMins int
 	SeedDemoData  bool
-	// FixedClockRFC3339, when set, pins the business clock (see
-	// internal/platform/clock) to this instant instead of the real wall
-	// clock. A test/demo affordance only - e.g. so a Playwright run's
-	// server never lands on a real-calendar draw day by accident. Never set
-	// this outside local/test environments.
-	FixedClockRFC3339 string
 	// KapookCountdownDuration is how long a goal's auto-purchase countdown
 	// runs once its target is reached, defaulting to the real 24h. This is
 	// a config knob, not a code constant, specifically so a demo/test run
@@ -69,7 +63,6 @@ func Load() Config {
 		JWTSecret:               getEnv("JWT_SECRET", ""),
 		JWTExpiryMins:           getEnvInt("JWT_EXPIRY_MINUTES", 60),
 		SeedDemoData:            getEnvBool("SEED_DEMO_DATA", false),
-		FixedClockRFC3339:       getEnv("FIXED_CLOCK_RFC3339", ""),
 		KapookCountdownDuration: getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
 	}
 

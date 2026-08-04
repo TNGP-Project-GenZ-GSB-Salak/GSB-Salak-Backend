@@ -34,11 +34,12 @@ test.describe("kapook countdown auto-purchase", () => {
     await page.goto("/goal.html");
     await expect(page.getByTestId("goal-form-section")).toBeVisible();
 
-    // purchase_date is pinned to the same test date for every holding this
-    // whole suite creates (see FIXED_CLOCK_RFC3339 in fixtures.js), so
-    // FindByAccountID's "ORDER BY purchase_date DESC" ties on same-day
-    // holdings - the array's last element is not reliably "the one this
-    // test just bought." Snapshot ids first and diff afterward instead.
+    // purchase_date is a date, not a timestamp, and this whole suite runs
+    // within one real calendar day - so every holding it creates ties on
+    // the same purchase_date. FindByAccountID's "ORDER BY purchase_date
+    // DESC" is therefore not a stable order among them: the array's last
+    // element is not reliably "the one this test just bought." Snapshot
+    // ids first and diff afterward instead.
     const baselineHoldings = await page.evaluate((accountId) => apiFetch(`/salak/holdings?account_id=${accountId}`), SALAK_ACCOUNT_ID);
     const baselineHoldingIds = new Set(baselineHoldings.map((h) => h.id));
 

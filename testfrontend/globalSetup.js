@@ -10,6 +10,13 @@ module.exports = async function globalSetup() {
     "UPDATE account.accounts SET balance = 50000 WHERE account_number = '1234009012'",
     "UPDATE account.accounts SET balance = 0 WHERE account_number = '4001000111'",
     "UPDATE account.accounts SET balance = 0 WHERE account_number = '5001000111'",
+    // The server runs on the real wall clock (no pinned test date - see
+    // fixtures.js), so any real-calendar draw date cmd/seed populated for
+    // the demo products would otherwise make buy-salak/goal/countdown
+    // specs flake on the 16th/1st/2nd. Clearing them here is what keeps
+    // this suite date-independent; draw-day-guard.spec.js inserts its own
+    // one-off row for the real "today" and removes it immediately after.
+    "DELETE FROM salak.draw_dates",
     "DELETE FROM transaction.ledger_entries",
     // kapook_transactions references both kapook_goals(id) and, since ticket
     // 08, salak.holdings(id) - with no cascade on either - so it must be

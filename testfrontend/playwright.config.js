@@ -1,5 +1,5 @@
 const { defineConfig, devices } = require("@playwright/test");
-const { FIXED_CLOCK_RFC3339, KAPOOK_COUNTDOWN_DURATION } = require("./tests/helpers/fixtures");
+const { KAPOOK_COUNTDOWN_DURATION } = require("./tests/helpers/fixtures");
 
 module.exports = defineConfig({
   testDir: "./tests",
@@ -22,13 +22,13 @@ module.exports = defineConfig({
       command: "go run ./cmd/api",
       cwd: "..",
       port: 8080,
-      // Pins the server's business clock (purchase/maturity dates, the
-      // draw-day guard) away from the real calendar, so buy-salak specs
-      // never flake on the 16th/1st/2nd once cmd/seed populates real
-      // draw dates for the demo products. See fixtures.js for the date's
-      // rationale. Note: with reuseExistingServer, an already-running
-      // `go run ./cmd/api` from outside this suite won't pick this up.
-      env: { ...process.env, FIXED_CLOCK_RFC3339, KAPOOK_COUNTDOWN_DURATION },
+      // The server runs on the real wall clock - buy-salak specs are kept
+      // safe from a real-calendar draw day by globalSetup.js clearing
+      // salak.draw_dates before the suite runs, not by pinning the clock.
+      // See fixtures.js for why a settable clock isn't used here. Note:
+      // with reuseExistingServer, an already-running `go run ./cmd/api`
+      // from outside this suite won't pick up KAPOOK_COUNTDOWN_DURATION.
+      env: { ...process.env, KAPOOK_COUNTDOWN_DURATION },
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
@@ -42,7 +42,7 @@ module.exports = defineConfig({
       // up to that point passing.
       command: "go run ./cmd/worker",
       cwd: "..",
-      env: { ...process.env, FIXED_CLOCK_RFC3339, KAPOOK_COUNTDOWN_DURATION },
+      env: { ...process.env, KAPOOK_COUNTDOWN_DURATION },
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },

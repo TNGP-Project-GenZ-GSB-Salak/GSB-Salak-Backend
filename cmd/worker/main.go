@@ -37,14 +37,6 @@ func main() {
 	}
 
 	var clk clock.Clock = clock.Real{}
-	if cfg.FixedClockRFC3339 != "" {
-		fixed, err := time.Parse(time.RFC3339, cfg.FixedClockRFC3339)
-		if err != nil {
-			log.Fatalf("invalid FIXED_CLOCK_RFC3339: %v", err)
-		}
-		clk = clock.Fixed(fixed)
-		log.Printf("business clock pinned to %s via FIXED_CLOCK_RFC3339 - do not set this outside local/test", fixed)
-	}
 
 	accountRepository := accountrepo.NewGormAccountRepository(gdb)
 	productRepository := salakrepo.NewGormProductRepository(gdb)

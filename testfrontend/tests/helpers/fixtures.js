@@ -1,13 +1,17 @@
 // Fixed IDs from cmd/seed/main.go's deterministic demo data.
 //
-// PINNED_TEST_DATE is the date (safe for both real products' draw-day
-// calendar - not the 1-year product's 16th, not the 2-year product's 1st/2nd)
-// that FIXED_CLOCK_RFC3339 pins the whole testfrontend server's business
-// clock to (see ../../playwright.config.js). Without this, every buy-salak
-// spec would become flaky on the real calendar's draw days once
-// cmd/seed populates salak.draw_dates for the real products. The one spec
-// that DOES want to hit a draw day (draw-day-guard.spec.js) inserts its own
-// one-off row for this exact date instead of relying on the real calendar.
+// There is no pinned business-clock date here on purpose: the server
+// always runs on the real wall clock (internal/platform/clock.Real).
+// globalSetup.js instead clears salak.draw_dates before the suite runs, so
+// no spec other than draw-day-guard.spec.js ever sees a draw day - that
+// one spec inserts its own one-off row for the real "today" and cleans it
+// up immediately after. A settable business clock was tried and reverted:
+// it pinned draw-day testing correctly, but the same clock also drives
+// ledger timestamps, maturity dates, and (once the Kapook countdown
+// existed) the withdrawal fee window and GoalReachedAt - one env var was
+// moving all of those at once, which is exactly the failure mode
+// .scratch/kapook-goal-saving/spec.md's "The scheduler" section rejected a
+// settable debug clock for.
 module.exports = {
   DEMO_USERNAME: "demo",
   DEMO_PASSWORD: "demopass123",
@@ -17,8 +21,6 @@ module.exports = {
   SALAK_ACCOUNT_NUMBER: "4001000111",
   KAPOOK_ACCOUNT_ID: "44444444-4444-4444-4444-444444444444",
   KAPOOK_ACCOUNT_NUMBER: "5001000111",
-  PINNED_TEST_DATE: "2026-03-10",
-  FIXED_CLOCK_RFC3339: "2026-03-10T00:00:00Z",
   // Short enough to observe within a test, long enough to assert the
   // "counting down, not yet purchased" state before it expires. The
   // worker's own poll tick is a fixed ~1 minute (not configurable - see
