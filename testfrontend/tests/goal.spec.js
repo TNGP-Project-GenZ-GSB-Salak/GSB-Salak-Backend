@@ -125,4 +125,58 @@ test.describe("kapook goal", () => {
     expect(errorMessage).toMatch(/active goal already exists/i);
     await shoot(page, "second-attempt-rejected");
   });
+
+  test("withdrawing shows whether it's free or charged, and the fee kicks in after two free withdrawals", async ({ page }) => {
+    const shoot = createShooter("goal", "withdraw");
+
+    await loginAsDemo(page);
+    await page.goto("/goal.html");
+
+    // Continues from the earlier tests in this file: goal target 5000,
+    // already saved 1500 - two free withdrawals available in the window.
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    await expect(page.getByTestId("withdrawal-status")).toHaveText(/free/i);
+    await shoot(page, "before-any-withdrawal");
+
+    // 1st withdrawal: free.
+    await page.getByTestId("withdraw-savings-account-select").selectOption(SAVINGS_ACCOUNT_ID);
+    await page.getByTestId("withdraw-amount-input").fill("500");
+    await page.getByTestId("withdraw-submit").click();
+
+    await expect(page.getByTestId("goal-saved")).toHaveText("1000");
+    await expect(page.getByTestId("withdraw-result")).toHaveText(/no fee/i);
+    await expect(page.getByTestId("withdrawal-status")).toHaveText(/free/i);
+    await shoot(page, "first-withdrawal-free");
+
+    // 2nd withdrawal: still free, but it's the last one - status should now
+    // warn the next one will be charged.
+    await page.getByTestId("withdraw-amount-input").fill("500");
+    await page.getByTestId("withdraw-submit").click();
+
+    await expect(page.getByTestId("goal-saved")).toHaveText("500");
+    await expect(page.getByTestId("withdraw-result")).toHaveText(/no fee/i);
+    await expect(page.getByTestId("withdrawal-status")).toHaveText(/2% fee/i);
+    await shoot(page, "second-withdrawal-free-allowance-exhausted");
+
+    // 3rd withdrawal in the same window: charged the 2% fee.
+    await page.getByTestId("withdraw-amount-input").fill("100");
+    await page.getByTestId("withdraw-submit").click();
+
+    await expect(page.getByTestId("goal-saved")).toHaveText("400");
+    await expect(page.getByTestId("withdraw-result")).toHaveText(/2% fee applied - 98 THB reached savings/i);
+    await shoot(page, "third-withdrawal-charged");
+
+    // The goal survives every withdrawal, including one that would empty it.
+    await page.getByTestId("withdraw-amount-input").fill("400");
+    await page.getByTestId("withdraw-submit").click();
+
+    await expect(page.getByTestId("goal-saved")).toHaveText("0");
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    await shoot(page, "emptied-but-goal-still-active");
+
+    await page.reload();
+    await expect(page.getByTestId("goal-view")).toBeVisible();
+    await expect(page.getByTestId("goal-form-section")).toBeHidden();
+    await expect(page.getByTestId("goal-saved")).toHaveText("0");
+  });
 });

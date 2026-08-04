@@ -35,6 +35,21 @@
       </label>
       <button type="submit" data-testid="deposit-submit">Pay in</button>
     </form>
+
+    <h3>Withdraw</h3>
+    <p data-testid="withdrawal-status"></p>
+    <form id="withdraw-form" data-testid="withdraw-form">
+      <label>
+        To savings account
+        <select name="savings_account_id" data-testid="withdraw-savings-account-select" required></select>
+      </label>
+      <label>
+        Amount (THB)
+        <input name="amount" type="number" data-testid="withdraw-amount-input" required />
+      </label>
+      <button type="submit" data-testid="withdraw-submit">Withdraw</button>
+    </form>
+    <p id="withdraw-result" class="hidden" data-testid="withdraw-result"></p>
   </section>
 
   <section id="goal-form-section" data-testid="goal-form-section">
@@ -64,6 +79,10 @@
     const productSelect = document.querySelector('[name="product_id"]');
     const depositForm = document.getElementById("deposit-form");
     const savingsAccountSelect = document.querySelector('[name="savings_account_id"]');
+    const withdrawForm = document.getElementById("withdraw-form");
+    const withdrawSavingsAccountSelect = document.querySelector('[data-testid="withdraw-savings-account-select"]');
+    const withdrawalStatusEl = document.querySelector('[data-testid="withdrawal-status"]');
+    const withdrawResultEl = document.getElementById("withdraw-result");
     const message = document.getElementById("message");
 
     let kapookAccountId = null;
@@ -78,6 +97,18 @@
       document.querySelector('[data-testid="goal-progress"]').textContent = String(progress);
       goalView.classList.remove("hidden");
       goalFormSection.classList.add("hidden");
+      refreshWithdrawalStatus();
+    }
+
+    async function refreshWithdrawalStatus() {
+      try {
+        const status = await apiFetch(`/kapook/goals/withdrawal-status?kapook_account_id=${kapookAccountId}`);
+        withdrawalStatusEl.textContent = status.next_withdrawal_is_free
+          ? `Next withdrawal is free (${status.free_withdrawals_remaining} of 2 remaining this window).`
+          : "Next withdrawal will carry a 2% fee (no free withdrawals left this window).";
+      } catch (err) {
+        withdrawalStatusEl.textContent = "";
+      }
     }
 
     async function loadProducts() {
@@ -94,6 +125,7 @@
 
       for (const a of accounts.filter((a) => a.type === "savings")) {
         savingsAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
+        withdrawSavingsAccountSelect.appendChild(new Option(`${a.account_number} (${a.balance} THB)`, a.id));
       }
 
       await loadProducts();
@@ -142,6 +174,32 @@
         });
         renderGoal(goal);
         depositForm.reset();
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+
+    withdrawForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+      withdrawResultEl.classList.add("hidden");
+
+      const formData = new FormData(withdrawForm);
+      try {
+        const result = await apiFetch("/kapook/goals/withdraw", {
+          method: "POST",
+          body: JSON.stringify({
+            kapook_account_id: kapookAccountId,
+            savings_account_id: formData.get("savings_account_id"),
+            amount: Number(formData.get("amount")),
+          }),
+        });
+        renderGoal(result.goal);
+        withdrawResultEl.textContent = result.fee_charged
+          ? `Withdrawn ${result.amount} THB, 2% fee applied - ${result.net_credited} THB reached savings.`
+          : `Withdrawn ${result.amount} THB, no fee - ${result.net_credited} THB reached savings.`;
+        withdrawResultEl.classList.remove("hidden");
+        withdrawForm.reset();
       } catch (err) {
         showError(message, err);
       }

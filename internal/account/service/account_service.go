@@ -62,6 +62,16 @@ func (s *AccountService) Debit(ctx context.Context, tx *gorm.DB, accountID uuid.
 	return newBalance, nil
 }
 
+func (s *AccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Account, error) {
+	a, err := s.repo.FindForUpdate(ctx, tx, accountID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Account{}, apperror.NotFound("account not found")
+	} else if err != nil {
+		return domain.Account{}, apperror.Internal("failed to lock account", err)
+	}
+	return a, nil
+}
+
 func (s *AccountService) Credit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error) {
 	a, err := s.repo.FindForUpdate(ctx, tx, accountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

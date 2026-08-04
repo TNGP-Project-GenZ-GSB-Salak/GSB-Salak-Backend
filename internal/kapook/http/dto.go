@@ -3,6 +3,7 @@ package http
 import (
 	"time"
 
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -47,5 +48,47 @@ func toGoalResponse(g domain.Goal) goalResponse {
 		IsActive:      g.IsActive,
 		GoalReachedAt: g.GoalReachedAt,
 		CreatedAt:     g.CreatedAt,
+	}
+}
+
+type withdrawRequest struct {
+	KapookAccountID  uuid.UUID       `json:"kapook_account_id" validate:"required"`
+	SavingsAccountID uuid.UUID       `json:"savings_account_id" validate:"required"`
+	Amount           decimal.Decimal `json:"amount" validate:"required"`
+}
+
+type withdrawResponse struct {
+	Goal        goalResponse    `json:"goal"`
+	Amount      decimal.Decimal `json:"amount"`
+	FeeCharged  bool            `json:"fee_charged"`
+	FeeAmount   decimal.Decimal `json:"fee_amount"`
+	NetCredited decimal.Decimal `json:"net_credited"`
+}
+
+func toWithdrawResponse(r kapook.WithdrawResult) withdrawResponse {
+	return withdrawResponse{
+		Goal:        toGoalResponse(r.Goal),
+		Amount:      r.Amount,
+		FeeCharged:  r.FeeCharged,
+		FeeAmount:   r.FeeAmount,
+		NetCredited: r.NetCredited,
+	}
+}
+
+type withdrawalStatusResponse struct {
+	WindowStart              time.Time `json:"window_start"`
+	WindowEnd                time.Time `json:"window_end"`
+	FreeWithdrawalsUsed      int       `json:"free_withdrawals_used"`
+	FreeWithdrawalsRemaining int       `json:"free_withdrawals_remaining"`
+	NextWithdrawalIsFree     bool      `json:"next_withdrawal_is_free"`
+}
+
+func toWithdrawalStatusResponse(s kapook.WithdrawalStatus) withdrawalStatusResponse {
+	return withdrawalStatusResponse{
+		WindowStart:              s.WindowStart,
+		WindowEnd:                s.WindowEnd,
+		FreeWithdrawalsUsed:      s.FreeWithdrawalsUsed,
+		FreeWithdrawalsRemaining: s.FreeWithdrawalsRemaining,
+		NextWithdrawalIsFree:     s.NextWithdrawalIsFree,
 	}
 }

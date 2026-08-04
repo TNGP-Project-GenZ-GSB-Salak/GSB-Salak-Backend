@@ -174,6 +174,10 @@ func (f *fakeAccountService) Credit(ctx context.Context, tx *gorm.DB, accountID 
 	return decimal.Zero, nil
 }
 
+func (f *fakeAccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {

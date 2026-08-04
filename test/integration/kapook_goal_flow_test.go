@@ -40,7 +40,7 @@ func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.Go
 	goalRepo := kapookrepo.NewGormGoalRepository(tx)
 	ledgerRepo := txrepo.NewGormLedgerRepository(tx)
 	transactionRepo := kapookrepo.NewGormTransactionRepository(tx)
-	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo), termsRepo
+	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo, clock.Real{}), termsRepo
 }
 
 func TestKapookGoalFlow_HappyPath_CreatesAndReadsBackActiveGoal(t *testing.T) {

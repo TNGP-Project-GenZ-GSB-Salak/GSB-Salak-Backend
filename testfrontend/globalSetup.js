@@ -14,8 +14,11 @@ module.exports = async function globalSetup() {
     "DELETE FROM salak.holdings",
     "UPDATE salak.ticket_sequence SET next_ticket_number = 1 WHERE id = 1",
     "DELETE FROM kapook.terms_acceptances WHERE user_id = '11111111-1111-1111-1111-111111111111'",
-    "DELETE FROM kapook.kapook_goals WHERE account_id = '44444444-4444-4444-4444-444444444444'",
+    // kapook_transactions.goal_id references kapook_goals(id) with no cascade,
+    // so transactions must go first or the goal delete hits a foreign-key
+    // violation.
     "DELETE FROM kapook.kapook_transactions WHERE kapook_account_id = '44444444-4444-4444-4444-444444444444'",
+    "DELETE FROM kapook.kapook_goals WHERE account_id = '44444444-4444-4444-4444-444444444444'",
   ].join("; ");
 
   try {

@@ -23,12 +23,16 @@ const (
 // side bookkeeping for a Salak purchase/expiration. SavingsAccountID and
 // HoldingID are nullable since no single Type uses both - deposit/withdraw/
 // withdraw_with_fee set SavingsAccountID only, buy_salak/salak_expiration
-// set HoldingID only.
+// set HoldingID only. GoalID is which goal the movement belongs to - needed
+// because one kapook account hosts many goals over its life, so counting a
+// goal's free-withdrawal allowance by KapookAccountID alone would conflate
+// withdrawals made against a different, earlier goal on the same account.
 type Transaction struct {
 	ID               uuid.UUID
 	Type             TransactionType
 	Amount           decimal.Decimal
 	KapookAccountID  uuid.UUID
+	GoalID           uuid.UUID
 	SavingsAccountID *uuid.UUID
 	HoldingID        *uuid.UUID
 	CreatedAt        time.Time

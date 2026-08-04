@@ -82,6 +82,10 @@ func (f *fakeAccountService) Credit(ctx context.Context, tx *gorm.DB, accountID 
 	return f.creditResult, nil
 }
 
+func (f *fakeAccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (accountdomain.Account, error) {
+	return f.GetByID(ctx, uuid.Nil, accountID)
+}
+
 // fakeSalakService is a hand-rolled implementation of salak.Service.
 type fakeSalakService struct {
 	getProductResult salakdomain.Product

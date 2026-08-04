@@ -2,6 +2,7 @@ package kapook
 
 import (
 	"context"
+	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/google/uuid"
@@ -39,6 +40,39 @@ type GoalRepository interface {
 // expirations).
 type TransactionRepository interface {
 	Create(ctx context.Context, tx *gorm.DB, t *domain.Transaction) error
+	// CountByGoalAndTypesInWindow counts goalID's existing transactions whose
+	// Type is in types and CreatedAt falls in [from, to) - the free-
+	// withdrawal allowance check. tx may be nil for an unlocked, read-only
+	// count (e.g. a status preview); the authoritative check inside Withdraw
+	// always passes the goal's already-locked tx so it can't race a
+	// concurrent withdrawal on the same goal.
+	CountByGoalAndTypesInWindow(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, types []domain.TransactionType, from, to time.Time) (int, error)
+}
+
+// WithdrawalStatus describes a goal's free-withdrawal allowance for the
+// rolling 12-month window (see domain.WithdrawalWindow) containing "now".
+// It's a read-time projection, not a persisted row - FreeWithdrawalsUsed is
+// always recomputed from kapook_transactions, never stored.
+type WithdrawalStatus struct {
+	WindowStart              time.Time
+	WindowEnd                time.Time
+	FreeWithdrawalsUsed      int
+	FreeWithdrawalsRemaining int
+	NextWithdrawalIsFree     bool
+}
+
+// WithdrawResult is what Withdraw actually did, as opposed to
+// WithdrawalStatus's forward-looking "what would the next one cost".
+// FeeAmount is 0 when FeeCharged is false. NetCredited is what the savings
+// account actually received (Amount minus FeeAmount) - the kapook balance
+// and the goal's SavingAmount both drop by the full pre-fee Amount, since
+// the fee is retained rather than left behind in the Kapook.
+type WithdrawResult struct {
+	Goal        domain.Goal
+	Amount      decimal.Decimal
+	FeeCharged  bool
+	FeeAmount   decimal.Decimal
+	NetCredited decimal.Decimal
 }
 
 // Service is the public surface the http layer depends on.
@@ -57,4 +91,16 @@ type Service interface {
 	// rejected if that would exceed the goal's target. Any positive
 	// amount is accepted, no minimum.
 	Deposit(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (domain.Goal, error)
+	// Withdraw debits kapookAccountID and credits savingsAccountID
+	// atomically, for any amount up to the active goal's SavingAmount (no
+	// minimum). The goal survives - IsActive is untouched even when the
+	// withdrawal empties the balance. The first two withdrawals in the
+	// goal's current rolling-12-month window are free; later ones in the
+	// same window carry a 2% fee taken out of what reaches savings.
+	Withdraw(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (WithdrawResult, error)
+	// GetWithdrawalStatus previews the free/fee outcome a withdrawal would
+	// have right now, without side effects - so a caller can warn the
+	// customer before they commit. Returns apperror.NotFound if
+	// kapookAccountID has no active goal.
+	GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID) (WithdrawalStatus, error)
 }

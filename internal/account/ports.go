@@ -26,4 +26,14 @@ type Service interface {
 	GetByID(ctx context.Context, userID, accountID uuid.UUID) (domain.Account, error)
 	Debit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error)
 	Credit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error)
+	// LockForUpdate takes a row lock on accountID without changing its
+	// balance, so an orchestrator that debits one account and credits
+	// another can lock them in a fixed, money-flow-independent order (lock
+	// this account first, regardless of whether its own leg turns out to be
+	// the debit or the credit) - avoiding an AB-BA deadlock against another
+	// orchestration that touches the same two accounts in the opposite
+	// role. Re-locking a row this same tx already holds is a no-op in
+	// Postgres, so calling this before Debit/Credit on the same account is
+	// always safe.
+	LockForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Account, error)
 }
