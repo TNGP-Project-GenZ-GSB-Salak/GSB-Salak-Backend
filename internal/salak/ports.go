@@ -18,6 +18,12 @@ import (
 // input being currently unactionable, not a system fault.
 var ErrDrawDay = errors.New("salak: product is closed for purchases on this draw day")
 
+// ErrUnitsExceedLetterCapacity is what ReserveTicketRange returns when
+// units alone can never fit in a single letter's 10,000,000-number block,
+// so no rollover could ever satisfy the request - the service layer turns
+// this into apperror.Validation.
+var ErrUnitsExceedLetterCapacity = errors.New("salak: units exceeds a single letter's ticket capacity")
+
 // ProductRepository is implemented by the gorm repository and consumed by the service.
 type ProductRepository interface {
 	ListActive(ctx context.Context) ([]domain.Product, error)
@@ -46,9 +52,16 @@ type DrawDateRepository interface {
 type HoldingRepository interface {
 	Create(ctx context.Context, tx *gorm.DB, h *domain.Holding) error
 	FindByAccountID(ctx context.Context, accountID uuid.UUID) ([]domain.Holding, error)
-	// ReserveTicketRange atomically reserves `units` contiguous ticket numbers
-	// under a row lock on the ticket_sequence singleton, returning [start, end].
-	ReserveTicketRange(ctx context.Context, tx *gorm.DB, units int64) (start, end int64, err error)
+	// ReserveTicketRange atomically reserves `units` contiguous ticket
+	// numbers for productID under a row lock on that product's own
+	// ticket_sequence cursor row, returning the letter and [start, end].
+	// The range never crosses a letter boundary: if the current letter's
+	// 10,000,000-number block doesn't have room left, the whole
+	// reservation moves to the next letter's 0, abandoning that block's
+	// leftover tail rather than splitting the purchase. Rejects units
+	// greater than a single letter's capacity (10,000,000) up front, since
+	// no letter block could ever satisfy it.
+	ReserveTicketRange(ctx context.Context, tx *gorm.DB, productID uuid.UUID, units int64) (letter string, start, end int64, err error)
 	// FindForUpdate locks and returns holdingID - the settlement service's
 	// idempotency check (SettledAt != nil) and its money movement must see
 	// a consistent row, so this is always called from inside a tx.

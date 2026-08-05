@@ -19,6 +19,7 @@ const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
 	sqlStateCheckViolation      = "23514"
+	sqlStateExclusionViolation  = "23P01"
 )
 
 // requirePgErrorCode fails the test unless err is a *pgconn.PgError with the

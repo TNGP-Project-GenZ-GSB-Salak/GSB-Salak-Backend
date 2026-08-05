@@ -24,15 +24,16 @@ func TestProductRepo_Upsert_SecondCallUpdatesExistingRowOnConflict(t *testing.T)
 	original := mustCreateProduct(t, tx, code, decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
 	updated := &salakdomain.Product{
-		ID:          uuid.New(), // deliberately different - must be ignored in favor of the existing row's id
-		Code:        code,
-		Name:        "Updated Name",
-		TermMonths:  24,
-		UnitPrice:   decimal.RequireFromString("200"),
-		MinPurchase: decimal.RequireFromString("2000"),
-		MaxPurchase: decimal.RequireFromString("20000"),
-		StepAmount:  decimal.RequireFromString("2000"),
-		IsActive:    true,
+		ID:                      uuid.New(), // deliberately different - must be ignored in favor of the existing row's id
+		Code:                    code,
+		Name:                    "Updated Name",
+		TermMonths:              24,
+		UnitPrice:               decimal.RequireFromString("200"),
+		MinPurchase:             decimal.RequireFromString("2000"),
+		MaxPurchase:             decimal.RequireFromString("20000"),
+		StepAmount:              decimal.RequireFromString("2000"),
+		MaturityInterestPerUnit: decimal.RequireFromString("30"),
+		IsActive:                true,
 	}
 	require.NoError(t, repo.Upsert(context.Background(), updated))
 
@@ -44,6 +45,50 @@ func TestProductRepo_Upsert_SecondCallUpdatesExistingRowOnConflict(t *testing.T)
 
 	_, err = repo.FindByID(context.Background(), updated.ID)
 	assert.True(t, errors.Is(err, gorm.ErrRecordNotFound), "the second call's own id must never have been inserted as a separate row")
+}
+
+// TestProductRepo_Upsert_ProvisionsTicketSequenceRowIdempotently covers D8's
+// decision to provision a product's ticket_sequence cursor atomically
+// inside Upsert: the row must exist right after the first Upsert (at ก/0),
+// and a second Upsert of the same product (the conflict-update path, which
+// cmd/seed hits on every re-run) must never reset an already-advanced
+// cursor.
+func TestProductRepo_Upsert_ProvisionsTicketSequenceRowIdempotently(t *testing.T) {
+	tx := newTestTx(t)
+	repo := salakrepo.NewGormProductRepository(tx)
+	code := uniqueProductCode()
+
+	p := mustCreateProduct(t, tx, code, decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	var seq salakdomain.TicketSequence
+	require.NoError(t, tx.Where("product_id = ?", p.ID).First(&seq).Error)
+	assert.Equal(t, "ก", seq.NextTicketLetter)
+	assert.EqualValues(t, 0, seq.NextTicketNumber)
+
+	// Advance the cursor as if a real purchase happened, then re-upsert the
+	// same product (update path) and confirm the cursor is untouched.
+	require.NoError(t, tx.Model(&salakdomain.TicketSequence{}).
+		Where("product_id = ?", p.ID).
+		Updates(map[string]interface{}{"next_ticket_letter": "ค", "next_ticket_number": 42}).Error)
+
+	again := &salakdomain.Product{
+		ID:                      uuid.New(),
+		Code:                    code,
+		Name:                    "Re-upserted Name",
+		TermMonths:              p.TermMonths,
+		UnitPrice:               p.UnitPrice,
+		MinPurchase:             p.MinPurchase,
+		MaxPurchase:             p.MaxPurchase,
+		StepAmount:              p.StepAmount,
+		MaturityInterestPerUnit: p.MaturityInterestPerUnit,
+		IsActive:                true,
+	}
+	require.NoError(t, repo.Upsert(context.Background(), again))
+
+	var seqAfter salakdomain.TicketSequence
+	require.NoError(t, tx.Where("product_id = ?", p.ID).First(&seqAfter).Error)
+	assert.Equal(t, "ค", seqAfter.NextTicketLetter, "re-upserting an existing product must never reset an in-flight cursor")
+	assert.EqualValues(t, 42, seqAfter.NextTicketNumber)
 }
 
 func TestProductRepo_Upsert_InvalidTermMonthsRejectedByCheckConstraint(t *testing.T) {
@@ -90,15 +135,16 @@ func TestProductRepo_ListActive_FiltersAndOrdersByTermMonths(t *testing.T) {
 
 	newProduct := func(termMonths int, isActive bool) *salakdomain.Product {
 		return &salakdomain.Product{
-			ID:          uuid.New(),
-			Code:        uniqueProductCode(),
-			Name:        "Test Product",
-			TermMonths:  termMonths,
-			UnitPrice:   decimal.RequireFromString("100"),
-			MinPurchase: decimal.RequireFromString("1000"),
-			MaxPurchase: decimal.RequireFromString("10000"),
-			StepAmount:  decimal.RequireFromString("1000"),
-			IsActive:    isActive,
+			ID:                      uuid.New(),
+			Code:                    uniqueProductCode(),
+			Name:                    "Test Product",
+			TermMonths:              termMonths,
+			UnitPrice:               decimal.RequireFromString("100"),
+			MinPurchase:             decimal.RequireFromString("1000"),
+			MaxPurchase:             decimal.RequireFromString("10000"),
+			StepAmount:              decimal.RequireFromString("1000"),
+			MaturityInterestPerUnit: decimal.RequireFromString("15"),
+			IsActive:                isActive,
 		}
 	}
 

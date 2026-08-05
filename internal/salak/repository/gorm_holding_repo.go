@@ -4,11 +4,18 @@ import (
 	"context"
 	"time"
 
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// ticketsPerLetter is a letter's block capacity - 0..9999999 inclusive,
+// the 7-digit display width. Fixed by docs/GAPS.md §2.3, not configurable:
+// changing it would silently reinterpret every already-issued ticket
+// number's letter boundary.
+const ticketsPerLetter = 10_000_000
 
 type GormHoldingRepository struct {
 	db *gorm.DB
@@ -40,26 +47,49 @@ func (r *GormHoldingRepository) FindByAccountID(ctx context.Context, accountID u
 	return holdings, err
 }
 
-func (r *GormHoldingRepository) ReserveTicketRange(ctx context.Context, tx *gorm.DB, units int64) (int64, int64, error) {
+func (r *GormHoldingRepository) ReserveTicketRange(ctx context.Context, tx *gorm.DB, productID uuid.UUID, units int64) (string, int64, int64, error) {
+	if units > ticketsPerLetter {
+		return "", 0, 0, salak.ErrUnitsExceedLetterCapacity
+	}
+
 	var seq domain.TicketSequence
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ?", 1).
+		Where("product_id = ?", productID).
 		First(&seq).Error; err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 
-	start := seq.NextTicketNumber
+	letter := seq.NextTicketLetter
+	number := seq.NextTicketNumber
+
+	// The range never crosses a letter boundary: if this letter's block
+	// doesn't have room for the whole purchase, the entire reservation
+	// moves to the next letter's 0 instead of splitting - abandoning that
+	// block's leftover tail (at most units-1 tickets, once per 10M).
+	if remaining := ticketsPerLetter - number; units > remaining {
+		next, err := domain.NextLetter(letter)
+		if err != nil {
+			return "", 0, 0, err
+		}
+		letter = next
+		number = 0
+	}
+
+	start := number
 	end := start + units - 1
 
 	if err := tx.WithContext(ctx).
 		Model(&domain.TicketSequence{}).
-		Where("id = ?", 1).
-		Update("next_ticket_number", end+1).Error; err != nil {
-		return 0, 0, err
+		Where("product_id = ?", productID).
+		Updates(map[string]interface{}{
+			"next_ticket_letter": letter,
+			"next_ticket_number": end + 1,
+		}).Error; err != nil {
+		return "", 0, 0, err
 	}
 
-	return start, end, nil
+	return letter, start, end, nil
 }
 
 func (r *GormHoldingRepository) FindForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error) {

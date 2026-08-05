@@ -100,9 +100,9 @@ func TestBuySalakFlow_HappyPath_DebitsCreditsMintsAndLedgers(t *testing.T) {
 
 // TestBuySalakFlow_MidTransactionFailure_RollsBackEverything forces a real,
 // DB-level failure strictly after the debit has already run within
-// BuySalak's transaction (by deleting the salak.ticket_sequence singleton
-// row that ReserveTicketRange depends on, so MintHolding fails on its very
-// first query), then asserts the funding account's balance is completely
+// BuySalak's transaction (by deleting the product's own salak.ticket_sequence
+// cursor row that ReserveTicketRange depends on, so MintHolding fails on its
+// very first query), then asserts the funding account's balance is completely
 // unchanged and no holding/ledger rows exist - proving the whole
 // debit->mint->credit->ledger chain rolled back atomically against real
 // Postgres. This is the exact failure mode the BuySalakService unit test
@@ -117,7 +117,7 @@ func TestBuySalakFlow_MidTransactionFailure_RollsBackEverything(t *testing.T) {
 	salakAccount := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
 	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
-	require.NoError(t, tx.Exec(`DELETE FROM salak.ticket_sequence WHERE id = 1`).Error)
+	require.NoError(t, tx.Exec(`DELETE FROM salak.ticket_sequence WHERE product_id = ?`, product.ID).Error)
 
 	buySvc, accountRepository := newBuySalakService(tx)
 

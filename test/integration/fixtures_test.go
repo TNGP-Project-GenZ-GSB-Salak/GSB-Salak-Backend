@@ -70,15 +70,16 @@ func mustSetPrimaryAccount(t *testing.T, tx *gorm.DB, accountID uuid.UUID) {
 func mustCreateProduct(t *testing.T, tx *gorm.DB, code string, unitPrice, minPurchase, maxPurchase, stepAmount decimal.Decimal) salakdomain.Product {
 	t.Helper()
 	p := &salakdomain.Product{
-		ID:          uuid.New(),
-		Code:        code,
-		Name:        "Integration Test Product " + code,
-		TermMonths:  12,
-		UnitPrice:   unitPrice,
-		MinPurchase: minPurchase,
-		MaxPurchase: maxPurchase,
-		StepAmount:  stepAmount,
-		IsActive:    true,
+		ID:                      uuid.New(),
+		Code:                    code,
+		Name:                    "Integration Test Product " + code,
+		TermMonths:              12,
+		UnitPrice:               unitPrice,
+		MinPurchase:             minPurchase,
+		MaxPurchase:             maxPurchase,
+		StepAmount:              stepAmount,
+		MaturityInterestPerUnit: decimal.RequireFromString("15"),
+		IsActive:                true,
 	}
 	require.NoError(t, salakrepo.NewGormProductRepository(tx).Upsert(context.Background(), p))
 	return *p

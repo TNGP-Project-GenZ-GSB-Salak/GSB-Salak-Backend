@@ -32,8 +32,11 @@ func (Holding) TableName() string {
 }
 
 // TicketStartID and TicketEndID render the full displayed ticket ID,
-// e.g. "ก0007530" - the letter is randomized once per holding, the
-// zero-padded number is the raw ticket_start/ticket_end.
+// e.g. "ก0007530" - the letter is assigned deterministically by
+// ReserveTicketRange's per-product cursor (see TicketSequence), never
+// randomized, and a holding's range never crosses a letter boundary, so
+// both ends always share h.TicketLetter. The zero-padded number is the
+// raw ticket_start/ticket_end.
 func (h Holding) TicketStartID() string {
 	return h.TicketLetter + fmt.Sprintf("%07d", h.TicketStart)
 }
@@ -42,10 +45,19 @@ func (h Holding) TicketEndID() string {
 	return h.TicketLetter + fmt.Sprintf("%07d", h.TicketEnd)
 }
 
-// TicketSequence is the singleton row used to atomically reserve
-// contiguous ticket-number ranges under a row lock.
+// TicketSequence is one product's allocation cursor - (NextTicketLetter,
+// NextTicketNumber) together identify the next ticket ReserveTicketRange
+// will hand out for that product. One row per product (ProductID is the
+// primary key), locked under SELECT ... FOR UPDATE so concurrent
+// purchases of the same product serialize; different products never
+// contend with each other. NextTicketNumber is bounded 0..9999999 (a
+// 7-digit block, enforced by a CHECK) - once a product's current letter
+// can't fit a purchase, the cursor skips to the next letter (see
+// NextLetter) at number 0, rather than letting the number roll over
+// unbounded the way the old global singleton counter did.
 type TicketSequence struct {
-	ID               int `gorm:"primaryKey"`
+	ProductID        uuid.UUID `gorm:"primaryKey"`
+	NextTicketLetter string
 	NextTicketNumber int64
 	UpdatedAt        time.Time
 }

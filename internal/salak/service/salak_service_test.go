@@ -81,17 +81,19 @@ func (f *fakeProductRepo) Upsert(ctx context.Context, p *domain.Product) error {
 type fakeHoldingRepo struct {
 	byAccountID map[uuid.UUID][]domain.Holding
 
+	reserveLetter            string
 	reserveStart, reserveEnd int64
 	reserveErr               error
 	createErr                error
 	findByAccountErr         error
 
-	lastReservedUnits int64
-	lastCreated       *domain.Holding
+	lastReservedProductID uuid.UUID
+	lastReservedUnits     int64
+	lastCreated           *domain.Holding
 }
 
 func newFakeHoldingRepo() *fakeHoldingRepo {
-	return &fakeHoldingRepo{byAccountID: map[uuid.UUID][]domain.Holding{}}
+	return &fakeHoldingRepo{byAccountID: map[uuid.UUID][]domain.Holding{}, reserveLetter: "ก"}
 }
 
 func (f *fakeHoldingRepo) Create(ctx context.Context, tx *gorm.DB, h *domain.Holding) error {
@@ -110,12 +112,13 @@ func (f *fakeHoldingRepo) FindByAccountID(ctx context.Context, accountID uuid.UU
 	return f.byAccountID[accountID], nil
 }
 
-func (f *fakeHoldingRepo) ReserveTicketRange(ctx context.Context, tx *gorm.DB, units int64) (int64, int64, error) {
+func (f *fakeHoldingRepo) ReserveTicketRange(ctx context.Context, tx *gorm.DB, productID uuid.UUID, units int64) (string, int64, int64, error) {
 	if f.reserveErr != nil {
-		return 0, 0, f.reserveErr
+		return "", 0, 0, f.reserveErr
 	}
+	f.lastReservedProductID = productID
 	f.lastReservedUnits = units
-	return f.reserveStart, f.reserveEnd, nil
+	return f.reserveLetter, f.reserveStart, f.reserveEnd, nil
 }
 
 func (f *fakeHoldingRepo) FindForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error) {
@@ -458,6 +461,7 @@ func TestSalakService_MintHolding(t *testing.T) {
 		product := activeProduct() // unit price 100, term 3 months
 		products := newFakeProductRepo(product)
 		holdings := newFakeHoldingRepo()
+		holdings.reserveLetter = "ฃ"
 		holdings.reserveStart, holdings.reserveEnd = 1000, 1004
 		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, newFakeDrawDateRepo(), testClock())
 
@@ -467,7 +471,12 @@ func TestSalakService_MintHolding(t *testing.T) {
 		assert.Equal(t, accountID, h.AccountID)
 		assert.Equal(t, product.ID, h.ProductID)
 		assert.EqualValues(t, 5, h.Units)
+		assert.Equal(t, product.ID, holdings.lastReservedProductID, "MintHolding must thread productID through to ReserveTicketRange")
 		assert.EqualValues(t, 5, holdings.lastReservedUnits)
+		// The letter comes straight from ReserveTicketRange's cursor now,
+		// not a random draw - asserting the exact value (not just "some
+		// valid consonant") is what would have caught the original bug.
+		assert.Equal(t, "ฃ", h.TicketLetter)
 		assert.EqualValues(t, 1000, h.TicketStart)
 		assert.EqualValues(t, 1004, h.TicketEnd)
 		assert.True(t, mustDecimal(t, "500").Equal(h.PurchaseAmount))
@@ -479,9 +488,6 @@ func TestSalakService_MintHolding(t *testing.T) {
 		// purchase + term - 1 day (the official rule, not purchase + term -
 		// see the fixed off-by-one bug in MintHolding).
 		assert.Equal(t, wantPurchaseDate.AddDate(0, product.TermMonths, 0).AddDate(0, 0, -1), h.MaturityDate)
-		letterRunes := []rune(h.TicketLetter)
-		require.Len(t, letterRunes, 1)
-		assert.True(t, letterRunes[0] >= 0x0E01 && letterRunes[0] <= 0x0E2E, "ticket letter %q out of the Thai consonant range", h.TicketLetter)
 		require.NotNil(t, holdings.lastCreated)
 		assert.Equal(t, h.ID, holdings.lastCreated.ID)
 	})
