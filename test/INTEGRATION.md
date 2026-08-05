@@ -16,8 +16,8 @@ implementations — plus one test proving the cross-domain transaction mechanics
 `internal/transaction/service/buy_salak_service.go` actually work against real Postgres.
 
 **Out of scope** (already covered elsewhere, not re-tested here):
-- HTTP handlers/DTOs — Playwright E2E (`testfrontend`) covers the full request/response
-  cycle through real handlers.
+- HTTP handlers/DTOs — Playwright E2E (`GSB-Salak-Frontend/tests/`) covers the full
+  request/response cycle through real handlers.
 - Validation rules, ownership checks, arithmetic, orchestration branching — the
   service-layer unit tests (`test/UNIT.md`) already cover every edge case there with
   fakes; the one cross-domain test in this suite exists solely to prove the *transaction

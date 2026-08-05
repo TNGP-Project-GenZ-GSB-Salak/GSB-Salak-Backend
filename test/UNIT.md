@@ -4,8 +4,8 @@ This documents the Go unit test suite added under `internal/`. Before this,
 `go test ./...` had no test files anywhere in the module (see the root
 `CLAUDE.md`'s note: "test suite not yet written — see test/integration/").
 Real-Postgres integration tests now live in `test/integration/` (see
-`test/INTEGRATION.md`); end-to-end/UI coverage runs separately against
-`testfrontend` via Playwright (see root `CLAUDE.md`).
+`test/INTEGRATION.md`); end-to-end/UI coverage runs separately against the real
+`GSB-Salak-Frontend` app via Playwright (see root `CLAUDE.md`).
 
 This file is the high-level narrative — what's covered, why, and per-package coverage
 percentages. For a granular, one-row-per-scenario breakdown (`Prerequisites / Expected /
@@ -25,7 +25,7 @@ and needs no `docker compose up`.
 | Layer | Why it's out of scope here |
 |---|---|
 | `internal/*/repository` (GORM repos) | Thin wrappers around real SQL/GORM calls (locking clauses, upserts, joins) — correctness depends on an actual Postgres schema, so these belong in `test/integration/`, not mocked unit tests. |
-| `internal/*/http` (chi handlers + DTOs) | Wiring/serialization over the already-tested service layer; better exercised end-to-end via the `testfrontend` Playwright suite, which drives real HTTP requests through real handlers. |
+| `internal/*/http` (chi handlers + DTOs) | Wiring/serialization over the already-tested service layer; better exercised end-to-end via `GSB-Salak-Frontend`'s Playwright suite, which drives real HTTP requests through real handlers. |
 | `internal/platform/config`, `internal/platform/db`, `internal/platform/httpserver/docs.go` | Environment/bootstrap glue (env var parsing, `sql.Open`, Swagger doc generation) with no branching logic worth unit-testing in isolation. |
 | `cmd/*`, `docs/`, `migrations/` | Entry points and generated/SQL artifacts, not unit-testable logic. |
 

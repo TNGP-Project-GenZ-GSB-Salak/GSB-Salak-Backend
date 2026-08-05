@@ -2,10 +2,9 @@
 
 A barebones vanilla HTML/CSS/JS admin panel for the GSB Salak API — a login page plus a
 "Salak Actions" page that can force-settle a matured holding immediately (see
-`internal/admin`). CSS is layout-only — no colors, fonts, or other decoration. Mirrors
-`../testfrontend`'s shape (same zero-dependency static server, same `api.js` fetch-helper
-convention), since this is the same kind of thing: an internal-only client, not a real
-product surface.
+`internal/admin`). CSS is layout-only — no colors, fonts, or other decoration. Deliberately
+zero-dependency (a static server, one `api.js` fetch-helper file, no build step), since
+this is an internal-only client, not a real product surface.
 
 Deliberately minimal today (one action, one page) but structured — one `<section>` per
 concern on `dashboard.html` — so it can grow into an observability dashboard later without
@@ -44,6 +43,6 @@ Or from `GSB-Salak-Backend/`: `make admin-run`.
 ## Using the Salak Actions page
 
 Paste a real holding ID (visible via `GET /salak/holdings?account_id=...`, or from
-`testfrontend`/`GSB-Salak-Frontend`'s own UI) into the "Holding ID" field and submit.
+`GSB-Salak-Frontend`'s own UI) into the "Holding ID" field and submit.
 Settling an already-settled holding returns a 409, shown as an error message rather than
 a crash.

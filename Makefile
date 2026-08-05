@@ -1,4 +1,4 @@
-.PHONY: run worker dev migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report admin-run
+.PHONY: run worker dev migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger admin-run
 
 build:
 	go build -o bin/api ./cmd/api
@@ -48,18 +48,6 @@ test:
 
 test-integration: docker-up migrate-up
 	go test -tags=integration ./test/integration/...
-
-frontend-install:
-	cd testfrontend && npm install && npx playwright install chromium
-
-frontend-run:
-	cd testfrontend && node server.js
-
-frontend-test:
-	cd testfrontend && npm test
-
-frontend-report:
-	cd testfrontend && npm run report
 
 admin-run:
 	cd adminfrontend && node server.js
