@@ -90,17 +90,18 @@ The HTTP middleware chain (plain `net/http.Handler`, composed by chi).
 - **Debit**: success reduces balance correctly; **debiting the exact balance to zero succeeds** (boundary — zero is not "negative"); insufficient funds is rejected; account-not-found; lock/lookup error → `Internal`; `UpdateBalance` failure → `Internal`.
 - **Credit**: success increases balance; account-not-found; lock/lookup error; update failure; crediting zero is a no-op success.
 
-### `internal/salak/domain/holding_test.go`, `product_test.go`
+### `internal/salak/domain/holding_test.go`, `product_test.go`, `ticket_letters_test.go`
 Pure formatting/struct logic, no service involved.
 - `TicketStartID`/`TicketEndID` zero-padding: a typical mid-range number, `0` (fully padded), **exactly 7 digits** (fills the field with no padding), **more than 7 digits** (not truncated — a real edge case once the ticket sequence grows past 9,999,999), and a single digit.
 - Start and end IDs share the same ticket letter.
 - `TableName()` for `Holding`, `TicketSequence`, and `Product`.
+- `NextLetter` (the per-product ticket cursor's letter-advance rule): a normal advance (ก→ข); **skips ฤ and ฦ** (ร→ล, ล→ว — advancing is a skip, not a naive `+1`, since those two code points are vowels, not consonants); errors past the last letter (ฮ) and on any input that isn't one of the 44 real consonants.
 
 ### `internal/salak/service/salak_service_test.go`
 `SalakService` — product catalog, purchase validation, and ticket minting.
 - **ListProducts / GetProduct**: success; not-found; repo error → `Internal`; **an inactive product is rejected even though it exists** (`Validation`, not `NotFound`).
 - **ValidatePurchase**: zero and negative amounts; below minimum; above maximum; not a multiple of the step amount; and the two **inclusive boundary cases** (exactly at minimum, exactly at maximum — both must be valid, since the code uses `LessThan`/`GreaterThan`, not `<=`/`>=`).
-- **MintHolding**: success (verifies `Units` is computed as `amount / unitPrice` truncated, the reserved ticket range flows through unchanged into the holding, `MaturityDate` is `PurchaseDate + TermMonths`, and the ticket letter is a valid single Thai consonant rune in the exact `[0x0E01, 0x0E2E]` range the production code draws from — checked numerically rather than by hand-copying all 46 Thai characters into the test, which would be fragile); an amount that isn't an exact multiple of the unit price **truncates down** rather than erroring (documents current behavior — full-amount validation happens earlier in `ValidatePurchase`, not here); an amount below one whole unit price is rejected; product not found; product lookup error; ticket-range reservation failure; holding create failure.
+- **MintHolding**: success (verifies `Units` is computed as `amount / unitPrice` truncated, `productID` is forwarded to `ReserveTicketRange`, the reserved letter+range flow through unchanged into the holding — asserted against the exact value the fake returned, not just "some valid consonant", since a random letter is exactly the bug this now guards against — and `MaturityDate` is `PurchaseDate + TermMonths`); an amount that isn't an exact multiple of the unit price **truncates down** rather than erroring (documents current behavior — full-amount validation happens earlier in `ValidatePurchase`, not here); an amount below one whole unit price is rejected; product not found; product lookup error; ticket-range reservation failure (both the generic-error → `Internal` path and, still only integration-tested today, the `ErrUnitsExceedLetterCapacity` → `Validation` path); holding create failure.
 - **ListHoldingsByAccount**: success only after the ownership check passes (and confirms the correct `userID`/`accountID` were forwarded to `account.Service.GetByID`); an ownership-check failure is propagated **verbatim** (not rewrapped); holdings-repo error → `Internal`; no holdings is an empty slice, not an error.
 
 ### `internal/transaction/service/buy_salak_service_test.go`
@@ -121,35 +122,33 @@ Two services live in this package: `WeightedRandomBadgeService` (fully unit-test
 - **Construction validation**: mirrors `chooser`'s rules through `NewWeightedRandomBadgeService` — empty badges slice, all-zero-weight badges, and a negative-weight badge are all rejected.
 - **`GetRandomBadge`**: returns one of the configured badges; a 3-badge/weight (0.5/0.3/0.2) distribution check over 10,000 draws stays within ±5% of each badge's expected share, same statistical style as the chooser test.
 
+### `internal/kapook/domain/goal_test.go`, `transaction_test.go`, `terms_acceptance_test.go`, `withdrawal_window_test.go`
+Pure struct/formatting logic for the Kapook (กระปุกออม) goal-saving feature, no service involved.
+- `Goal.AvailableBalance` (`SavingAmount - SalakAmount`).
+- `WithdrawalWindow`'s rolling-12-month free-withdrawal window computation.
+- `TableName()` for `Transaction` and `TermsAcceptance`.
+
+### `internal/kapook/service/kapook_service_test.go`
+`KapookService` — terms acceptance, goal lifecycle, deposits/withdrawals, and the goal-buy/settlement paths, the largest test file in the suite.
+- **Accept / HasAccepted**: idempotent acceptance; the has-accepted read path.
+- **CreateGoal**: ownership/account-type checks, terms-accepted gate, the "at most one active goal per account" rule, and goal-amount validation against the product's step/max.
+- **GetActiveGoal / Snapshot**: the no-active-goal empty state; the derived read model (`AvailableBalance`, `TargetReached`, `CountdownRemainingSeconds`, `BuyEligible`, and the auto-purchase failure-tracking fields `AutoPurchaseAttempts`/`AutoPurchaseLastError` surfaced for the worker-observability admin panel).
+- **Deposit / Withdraw**: balance/target-exceeded rejections, the goal-reached countdown stamping on the deposit that first hits the target, the free-withdrawal-count/fee computation, and the all-or-nothing full-withdrawal-during-a-live-countdown rule.
+- **BuyFromGoal / BuyFromGoalInTx**: partial vs full purchases, goal deactivation once fully bought, and the tx-supplied variant the worker uses.
+- **GetGoalHistory / SettleMaturedHolding**: ownership-scoped history, and the settlement wrapper's Kapook-specific bookkeeping (decrementing `SalakAmount`, recording a `salak_expiration` row) only when a holding traces back to a goal.
+
+### `internal/kapook/worker/worker_test.go`
+`Worker` — the unattended auto-purchase poller (`ClaimDueGoals` → buy → mark done/failed/deferred).
+- **RunOnce**: the happy path (claims a due goal, buys its full available balance, deactivates it); a goal not yet due is left untouched; a draw-day rejection defers the goal and persists the retry date; any other failure is recorded via `RecordAutoPurchaseFailure` (attempts incremented, last error/timestamp stamped) and the goal is left active for the next tick — never a give-up/dead-letter state.
+
 ## Coverage summary
 
-Measured with `go test ./... -cover`. Percentages are statement coverage of
-the packages that have tests; packages with `[no test files]` or `0.0%` are
-out-of-scope per the table above, not gaps.
-
-| Domain | Package | Coverage | Notes |
-|---|---|---:|---|
-| Platform | `internal/platform/apperror` | 100.0% | |
-| Platform | `internal/platform/jwtutil` | 100.0% | |
-| Platform | `internal/platform/middleware` | 100.0% | |
-| Platform | `internal/chooser` | 100.0% | |
-| User | `internal/user/service` | 93.9% | Gaps are `bcrypt.GenerateFromPassword` and `signer.Sign` error branches — practically unreachable without fault-injecting those libraries. |
-| Account | `internal/account/service` | 100.0% | |
-| Salak | `internal/salak/domain` | 100.0% | |
-| Salak | `internal/salak/service` | 96.2% | Gap is the `crypto/rand.Int` failure branch inside `randomTicketLetter` — unreachable without a fake entropy source. |
-| Transaction | `internal/transaction/service` | 98.4% | Same `crypto/rand` branch, reached transitively through `MintHolding`. |
-| Badge | `internal/badge/service` | 84.6% | `WeightedRandomBadgeService` is 100% covered; the gap is entirely `BadgeService.NewBadgeService`/`UserOwnsBadge` (the thin ownership-check pass-through used by the transaction badge gate) — it has no direct unit test yet, only indirect exercise via `buy_salak_service_test.go`'s fake and `test/integration/buy_salak_flow_test.go`'s real-Postgres path. |
-
-**Per-domain business-logic average** (the five `internal/<domain>/service`
-packages, i.e. the actual thing this task asked to test): **(100.0 + 93.9 +
-96.2 + 98.4 + 84.6) / 5 ≈ 94.6%**.
-
-**Overall `go test ./... -cover` statement coverage across the entire
-module** (every package, including the intentionally-untested repository/
-http/config/db/cmd/docs/migrations layers): **43.5%** — low only because the
-denominator includes ~2,500 lines of GORM/chi/bootstrap code this task
-deliberately left to integration/E2E testing (see Scope above), not because
-service-layer logic is under-tested.
+Moved to `docs/tests/unit/COVERAGE.md` in the **monorepo root** (i.e.
+outside this submodule — `../../docs/tests/unit/COVERAGE.md` from here),
+so the numbers can be regenerated/tracked independently of this narrative
+file. Regenerate it (`go test ./... -cover`) whenever a package's test
+coverage changes meaningfully, the same way this file itself should be
+updated when a new test file or domain is added.
 
 ## Running
 
@@ -161,5 +160,6 @@ go build ./... && go vet ./... && gofmt -l .   # sanity-check alongside tests
 ```
 
 All of the above are clean as of this writing: `go build`, `go vet`, and
-`gofmt -l .` report nothing, and every test passes (174 passing test cases —
-top-level tests plus table-driven subtests — across 14 `_test.go` files).
+`gofmt -l .` report nothing, and every test passes (354 passing test cases —
+top-level tests plus table-driven subtests — across 25 `_test.go` files
+under `internal/`).
