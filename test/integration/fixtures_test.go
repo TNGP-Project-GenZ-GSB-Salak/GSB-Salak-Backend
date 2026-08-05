@@ -55,6 +55,16 @@ func mustCreateAccount(t *testing.T, tx *gorm.DB, userID uuid.UUID, accountType 
 	return *a
 }
 
+// mustSetPrimaryAccount flags accountID as the user's บัญชีคู่โอน directly
+// via tx, failing the test immediately on error - mustCreateAccount has no
+// isPrimary parameter (account.Service.Create's is the only real write
+// path, and fixtures bypass the service layer), so tests that need a
+// primary account call this right after creating one.
+func mustSetPrimaryAccount(t *testing.T, tx *gorm.DB, accountID uuid.UUID) {
+	t.Helper()
+	require.NoError(t, tx.Model(&accountdomain.Account{}).Where("id = ?", accountID).Update("is_primary_account", true).Error)
+}
+
 // mustCreateProduct inserts an active salak product via Upsert (its only
 // write path), failing the test immediately on error.
 func mustCreateProduct(t *testing.T, tx *gorm.DB, code string, unitPrice, minPurchase, maxPurchase, stepAmount decimal.Decimal) salakdomain.Product {

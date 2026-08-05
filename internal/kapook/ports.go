@@ -90,6 +90,10 @@ type WithdrawalStatus struct {
 	FreeWithdrawalsUsed      int
 	FreeWithdrawalsRemaining int
 	NextWithdrawalIsFree     bool
+	// Quote is non-nil only when GetWithdrawalStatus was called with a
+	// candidate amount - the fee/net a withdrawal of that amount would
+	// incur right now, from the same computation Withdraw itself uses.
+	Quote *WithdrawalQuote
 }
 
 // WithdrawResult is what Withdraw actually did, as opposed to
@@ -100,6 +104,17 @@ type WithdrawalStatus struct {
 // the fee is retained rather than left behind in the Kapook. GoalClosed is
 // true only for the all-or-nothing full withdrawal that walks away from a
 // live countdown; every other withdrawal leaves the goal open.
+// WithdrawalQuote is what GetWithdrawalStatus's optional amount preview
+// returns - fee/net for a candidate amount, computed by the exact same
+// computeWithdrawalFee helper Withdraw itself uses, so a quote can never
+// disagree with what Withdraw actually charges. Both fields together
+// (rather than a single struct pointer) would fine too; kept as one pointer
+// so "no amount was requested" round-trips as one nil check.
+type WithdrawalQuote struct {
+	FeeAmount decimal.Decimal
+	NetAmount decimal.Decimal
+}
+
 type WithdrawResult struct {
 	Goal        domain.Goal
 	Amount      decimal.Decimal
@@ -167,22 +182,30 @@ type Service interface {
 	// SavingAmount up to GoalAmount, GoalReachedAt is stamped, starting the
 	// auto-purchase countdown (see the worker package).
 	Deposit(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (domain.Goal, error)
-	// Withdraw debits kapookAccountID and credits savingsAccountID
+	// Withdraw debits kapookAccountID and credits the customer's primary
+	// account (account.Service.GetPrimaryAccount - the บัญชีคู่โอน),
 	// atomically, for any amount up to the active goal's AvailableBalance
-	// (no minimum). Once GoalReachedAt is set (a countdown is live),
-	// withdrawal becomes all-or-nothing: a partial amount is rejected, and
-	// withdrawing the full balance closes the goal instead of leaving it
-	// active - the customer's escape from the countdown. Before the goal is
-	// reached, the goal always survives, even a withdrawal that empties it.
-	// The first two withdrawals in the goal's current rolling-12-month
-	// window are free regardless of which case this is; later ones in the
-	// same window carry a 2% fee taken out of what reaches savings.
-	Withdraw(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (WithdrawResult, error)
+	// (no minimum). The destination is never customer-chosen: a customer
+	// with no primary account flagged fails loudly with
+	// kapook.CodeNoPrimaryAccount rather than guessing one. Once
+	// GoalReachedAt is set (a countdown is live), withdrawal becomes
+	// all-or-nothing: a partial amount is rejected, and withdrawing the
+	// full balance closes the goal instead of leaving it active - the
+	// customer's escape from the countdown. Before the goal is reached, the
+	// goal always survives, even a withdrawal that empties it. The first
+	// two withdrawals in the goal's current rolling-12-month window are
+	// free regardless of which case this is; later ones in the same window
+	// carry a 2% fee, rounded to two decimal places, taken out of what
+	// reaches savings.
+	Withdraw(ctx context.Context, userID, kapookAccountID uuid.UUID, amount decimal.Decimal) (WithdrawResult, error)
 	// GetWithdrawalStatus previews the free/fee outcome a withdrawal would
 	// have right now, without side effects - so a caller can warn the
 	// customer before they commit. Returns apperror.NotFound if
-	// kapookAccountID has no active goal.
-	GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID) (WithdrawalStatus, error)
+	// kapookAccountID has no active goal. amount is optional (nil skips the
+	// quote): when given, the returned WithdrawalStatus.Quote reports the
+	// fee/net that amount would incur if withdrawn right now, computed by
+	// the exact same logic Withdraw itself uses.
+	GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID, amount *decimal.Decimal) (WithdrawalStatus, error)
 	// BuyFromGoal converts amount of the active goal's available balance
 	// (SavingAmount minus SalakAmount) into the goal's own product, gated on
 	// that balance being at least the product's minimum purchase and amount

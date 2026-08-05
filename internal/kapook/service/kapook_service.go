@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
@@ -40,6 +41,21 @@ var withdrawalFeeRate = decimal.RequireFromString("0.02")
 // withdrawalCountedTypes are the kapook_transaction types that consume a
 // goal's free-withdrawal allowance.
 var withdrawalCountedTypes = []domain.TransactionType{domain.TransactionWithdraw, domain.TransactionWithdrawWithFee}
+
+// computeWithdrawalFee returns the fee and net amount a withdrawal of amount
+// would incur given feeCharged, shared by GetWithdrawalStatus's preview and
+// Withdraw's actual charge so a quote can never disagree with what gets
+// charged. Rounded to two decimal places (half away from zero) to match
+// Postgres's own rounding on assignment to a numeric(18,2) column - without
+// this, a ฿1,000.01 withdrawal would compute a fee of ฿20.0002, disagreeing
+// with the ฿20.00 the database actually stores.
+func computeWithdrawalFee(amount decimal.Decimal, feeCharged bool) (fee, net decimal.Decimal) {
+	if !feeCharged {
+		return decimal.Zero, amount
+	}
+	fee = amount.Mul(withdrawalFeeRate).Round(2)
+	return fee, amount.Sub(fee)
+}
 
 type KapookService struct {
 	terms        kapook.TermsRepository
@@ -402,7 +418,7 @@ func (s *KapookService) withdrawalAllowance(ctx context.Context, tx *gorm.DB, go
 // right now, without locking anything - a concurrent withdrawal can still
 // change the answer before the customer acts on it, which is fine for a
 // preview; Withdraw itself re-checks under lock.
-func (s *KapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID) (kapook.WithdrawalStatus, error) {
+func (s *KapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID, amount *decimal.Decimal) (kapook.WithdrawalStatus, error) {
 	if _, err := s.kapookAccount(ctx, userID, kapookAccountID); err != nil {
 		return kapook.WithdrawalStatus{}, err
 	}
@@ -424,38 +440,47 @@ func (s *KapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookA
 	if remaining < 0 {
 		remaining = 0
 	}
+	nextFree := used < freeWithdrawalsPerWindow
+
+	var quote *kapook.WithdrawalQuote
+	if amount != nil {
+		fee, net := computeWithdrawalFee(*amount, !nextFree)
+		quote = &kapook.WithdrawalQuote{FeeAmount: fee, NetAmount: net}
+	}
+
 	return kapook.WithdrawalStatus{
 		WindowStart:              windowStart,
 		WindowEnd:                windowEnd,
 		FreeWithdrawalsUsed:      used,
 		FreeWithdrawalsRemaining: remaining,
-		NextWithdrawalIsFree:     used < freeWithdrawalsPerWindow,
+		NextWithdrawalIsFree:     nextFree,
+		Quote:                    quote,
 	}, nil
 }
 
-// Withdraw moves money from kapookAccountID back to savingsAccountID,
-// atomically, for any amount up to the active goal's SavingAmount. The
-// goal's IsActive is never touched here - even a full withdrawal leaves the
-// goal open to keep saving toward the same target. The free-allowance check
-// runs inside this transaction against the goal row FindActiveByAccountIDForUpdate
+// Withdraw moves money from kapookAccountID back to the customer's primary
+// account, atomically, for any amount up to the active goal's SavingAmount.
+// The destination is resolved server-side via account.Service.GetPrimaryAccount
+// - never customer-chosen - so its ownership and type (always savings, per
+// the partial unique index + check constraint account.Service.Create relies
+// on) need no separate validation here; a customer with no primary account
+// flagged fails loudly instead of falling back to a guess. The goal's
+// IsActive is never touched here - even a full withdrawal leaves the goal
+// open to keep saving toward the same target. The free-allowance check runs
+// inside this transaction against the goal row FindActiveByAccountIDForUpdate
 // already locked, so two concurrent withdrawals against the same goal
 // serialize rather than racing to read the same "1 used" count.
-func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (kapook.WithdrawResult, error) {
-	if kapookAccountID == savingsAccountID {
-		return kapook.WithdrawResult{}, apperror.Validation("kapook_account_id and savings_account_id must be different")
-	}
-
+func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID uuid.UUID, amount decimal.Decimal) (kapook.WithdrawResult, error) {
 	if _, err := s.kapookAccount(ctx, userID, kapookAccountID); err != nil {
 		return kapook.WithdrawResult{}, err
 	}
 
-	savingsAcc, err := s.accounts.GetByID(ctx, userID, savingsAccountID)
+	primaryAcc, err := s.accounts.GetPrimaryAccount(ctx, userID)
 	if err != nil {
-		return kapook.WithdrawResult{}, err
+		log.Printf("ERROR: kapook withdraw: no primary account for user %s: %v", userID, err)
+		return kapook.WithdrawResult{}, apperror.NotFound("no primary account is on file for this customer - please contact your branch").WithCode(kapook.CodeNoPrimaryAccount)
 	}
-	if savingsAcc.Type != accountdomain.TypeSavings {
-		return kapook.WithdrawResult{}, apperror.Validation("savings_account_id must reference a savings-type account")
-	}
+	savingsAccountID := primaryAcc.ID
 
 	if amount.LessThanOrEqual(decimal.Zero) {
 		return kapook.WithdrawResult{}, apperror.Validation("amount must be greater than zero").WithCode(kapook.CodeAmountMustBePositive)
@@ -494,12 +519,7 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 			return err
 		}
 		feeCharged := used >= freeWithdrawalsPerWindow
-
-		feeAmount := decimal.Zero
-		if feeCharged {
-			feeAmount = amount.Mul(withdrawalFeeRate)
-		}
-		netCredited := amount.Sub(feeAmount)
+		feeAmount, netCredited := computeWithdrawalFee(amount, feeCharged)
 
 		// Lock order matches Deposit's: the kapook account first,
 		// regardless of debit/credit role, so the two operations can never

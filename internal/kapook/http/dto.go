@@ -68,9 +68,8 @@ func toGoalResponse(snap kapook.GoalSnapshot) goalResponse {
 }
 
 type withdrawRequest struct {
-	KapookAccountID  uuid.UUID       `json:"kapook_account_id" validate:"required"`
-	SavingsAccountID uuid.UUID       `json:"savings_account_id" validate:"required"`
-	Amount           decimal.Decimal `json:"amount" validate:"required"`
+	KapookAccountID uuid.UUID       `json:"kapook_account_id" validate:"required"`
+	Amount          decimal.Decimal `json:"amount" validate:"required"`
 }
 
 type withdrawResponse struct {
@@ -97,16 +96,25 @@ type withdrawalStatusResponse struct {
 	FreeWithdrawalsUsed      int       `json:"free_withdrawals_used"`
 	FreeWithdrawalsRemaining int       `json:"free_withdrawals_remaining"`
 	NextWithdrawalIsFree     bool      `json:"next_withdrawal_is_free"`
+	// QuotedFeeAmount/QuotedNetAmount are omitted unless the request
+	// supplied a candidate amount - see Handler.GetWithdrawalStatus.
+	QuotedFeeAmount *decimal.Decimal `json:"quoted_fee_amount,omitempty"`
+	QuotedNetAmount *decimal.Decimal `json:"quoted_net_amount,omitempty"`
 }
 
 func toWithdrawalStatusResponse(s kapook.WithdrawalStatus) withdrawalStatusResponse {
-	return withdrawalStatusResponse{
+	resp := withdrawalStatusResponse{
 		WindowStart:              s.WindowStart,
 		WindowEnd:                s.WindowEnd,
 		FreeWithdrawalsUsed:      s.FreeWithdrawalsUsed,
 		FreeWithdrawalsRemaining: s.FreeWithdrawalsRemaining,
 		NextWithdrawalIsFree:     s.NextWithdrawalIsFree,
 	}
+	if s.Quote != nil {
+		resp.QuotedFeeAmount = &s.Quote.FeeAmount
+		resp.QuotedNetAmount = &s.Quote.NetAmount
+	}
+	return resp
 }
 
 type buyFromGoalRequest struct {

@@ -135,10 +135,10 @@ func (f *fakeKapookService) Snapshot(ctx context.Context, goal kapookdomain.Goal
 func (f *fakeKapookService) Deposit(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (kapookdomain.Goal, error) {
 	return kapookdomain.Goal{}, nil
 }
-func (f *fakeKapookService) Withdraw(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (kapook.WithdrawResult, error) {
+func (f *fakeKapookService) Withdraw(ctx context.Context, userID, kapookAccountID uuid.UUID, amount decimal.Decimal) (kapook.WithdrawResult, error) {
 	return kapook.WithdrawResult{}, nil
 }
-func (f *fakeKapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID) (kapook.WithdrawalStatus, error) {
+func (f *fakeKapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID, amount *decimal.Decimal) (kapook.WithdrawalStatus, error) {
 	return kapook.WithdrawalStatus{}, nil
 }
 func (f *fakeKapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {

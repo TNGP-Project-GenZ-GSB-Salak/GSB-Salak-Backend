@@ -18,4 +18,5 @@ const (
 	CodeWithdrawalMustBeFullDuringCountdown = "kapook_withdrawal_must_be_full_during_countdown"
 	CodeBalanceBelowMinimumPurchase         = "kapook_balance_below_minimum_purchase"
 	CodeBuyAmountExceedsBalance             = "kapook_buy_amount_exceeds_balance"
+	CodeNoPrimaryAccount                    = "kapook_no_primary_account"
 )

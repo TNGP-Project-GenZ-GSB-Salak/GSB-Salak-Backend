@@ -9,6 +9,7 @@ import (
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook"
 	kapookdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	kapookrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/repository"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
@@ -24,6 +25,7 @@ func TestKapookGoalFlow_Withdraw_HappyPath_FirstTwoFreeThirdCharged(t *testing.T
 	user := mustCreateUser(t, tx, "")
 	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
 	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustSetPrimaryAccount(t, tx, savingsAcc.ID)
 	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
 	kapookSvc, termsRepo := newKapookService(tx)
@@ -35,16 +37,16 @@ func TestKapookGoalFlow_Withdraw_HappyPath_FirstTwoFreeThirdCharged(t *testing.T
 
 	accountRepository := accountrepo.NewGormAccountRepository(tx)
 
-	first, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("500"))
+	first, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("500"))
 	require.NoError(t, err)
 	assert.False(t, first.FeeCharged, "1st withdrawal is free")
 	assert.True(t, decimal.RequireFromString("2500").Equal(first.Goal.SavingAmount))
 
-	second, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("500"))
+	second, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("500"))
 	require.NoError(t, err)
 	assert.False(t, second.FeeCharged, "2nd withdrawal is free")
 
-	third, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("500"))
+	third, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("500"))
 	require.NoError(t, err)
 	assert.True(t, third.FeeCharged, "3rd withdrawal in the same window carries the fee")
 	assert.True(t, decimal.RequireFromString("10").Equal(third.FeeAmount), "2%% of 500")
@@ -72,6 +74,7 @@ func TestKapookGoalFlow_Withdraw_FullWithdrawal_LeavesGoalActive(t *testing.T) {
 	user := mustCreateUser(t, tx, "")
 	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
 	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustSetPrimaryAccount(t, tx, savingsAcc.ID)
 	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
 	kapookSvc, termsRepo := newKapookService(tx)
@@ -81,7 +84,7 @@ func TestKapookGoalFlow_Withdraw_FullWithdrawal_LeavesGoalActive(t *testing.T) {
 	_, err = kapookSvc.Deposit(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("1000"))
 	require.NoError(t, err)
 
-	result, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("1000"))
+	result, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("1000"))
 	require.NoError(t, err)
 	assert.True(t, decimal.Zero.Equal(result.Goal.SavingAmount))
 	assert.True(t, result.Goal.IsActive, "emptying the kapook must not close the goal")
@@ -97,6 +100,7 @@ func TestKapookGoalFlow_Withdraw_ExceedingBalance_RejectedWithoutChangingBalance
 	user := mustCreateUser(t, tx, "")
 	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
 	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustSetPrimaryAccount(t, tx, savingsAcc.ID)
 	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
 	kapookSvc, termsRepo := newKapookService(tx)
@@ -106,7 +110,7 @@ func TestKapookGoalFlow_Withdraw_ExceedingBalance_RejectedWithoutChangingBalance
 	_, err = kapookSvc.Deposit(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("300"))
 	require.NoError(t, err)
 
-	_, err = kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("301"))
+	_, err = kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("301"))
 	require.Error(t, err)
 	var appErr *apperror.Error
 	require.ErrorAs(t, err, &appErr)
@@ -148,6 +152,7 @@ func TestKapookGoalFlow_Withdraw_ConcurrentWithdrawals_OnlyOneConsumesLastFreeSl
 	user := mustCreateUser(t, setupTx, "")
 	kapookAcc := mustCreateAccount(t, setupTx, user.ID, accountdomain.TypeKapook, decimal.Zero)
 	savingsAcc := mustCreateAccount(t, setupTx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustSetPrimaryAccount(t, setupTx, savingsAcc.ID)
 	product := mustCreateProduct(t, setupTx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
 
 	setupKapookSvc, termsRepo := newKapookService(setupTx)
@@ -158,7 +163,7 @@ func TestKapookGoalFlow_Withdraw_ConcurrentWithdrawals_OnlyOneConsumesLastFreeSl
 	require.NoError(t, err)
 	// Consume the first of the two free withdrawals up front, so exactly one
 	// free slot remains for the two concurrent withdrawals below to race over.
-	_, err = setupKapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("100"))
+	_, err = setupKapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("100"))
 	require.NoError(t, err)
 	require.NoError(t, setupTx.Commit().Error)
 	t.Cleanup(func() {
@@ -182,7 +187,7 @@ func TestKapookGoalFlow_Withdraw_ConcurrentWithdrawals_OnlyOneConsumesLastFreeSl
 			defer wg.Done()
 			tx := sharedDB.Begin() // separate connection per goroutine - the point
 			kapookSvc, _ := newKapookService(tx)
-			_, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("50"))
+			_, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("50"))
 			if err != nil {
 				tx.Rollback()
 				mu.Lock()
@@ -214,4 +219,81 @@ func TestKapookGoalFlow_Withdraw_ConcurrentWithdrawals_OnlyOneConsumesLastFreeSl
 	// both would go free, producing free=3/fee=0 instead of free=2/fee=1.
 	assert.Equal(t, 2, freeCount, "the setup withdrawal plus exactly one of the two concurrent ones")
 	assert.Equal(t, 1, feeCount, "exactly one concurrent withdrawal must be charged the fee, never zero or two")
+}
+
+// TestKapookGoalFlow_Withdraw_SatangFee_RoundedToTwoDecimalPlaces proves the
+// rounding fix against a real Postgres numeric(18,2) column, not just Go's
+// own decimal.Round - the ledger entries actually persisted must agree with
+// what Withdraw reported, which a sqlmock-based unit test can't verify.
+func TestKapookGoalFlow_Withdraw_SatangFee_RoundedToTwoDecimalPlaces(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+	user := mustCreateUser(t, tx, "")
+	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
+	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustSetPrimaryAccount(t, tx, savingsAcc.ID)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	kapookSvc, termsRepo := newKapookService(tx)
+	require.NoError(t, termsRepo.Accept(ctx, user.ID))
+	_, err := kapookSvc.CreateGoal(ctx, user.ID, kapookAcc.ID, product.ID, decimal.RequireFromString("5000"))
+	require.NoError(t, err)
+	_, err = kapookSvc.Deposit(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("3000"))
+	require.NoError(t, err)
+
+	// Consume the two free withdrawals so the third (the satang one) is fee-charged.
+	_, err = kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("100"))
+	require.NoError(t, err)
+	_, err = kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("100"))
+	require.NoError(t, err)
+
+	// 1000.01 * 0.02 = 20.0002 unrounded - the exact bug this ticket fixes.
+	result, err := kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("1000.01"))
+	require.NoError(t, err)
+	assert.True(t, result.FeeCharged)
+	assert.True(t, decimal.RequireFromString("20.00").Equal(result.FeeAmount), "20.0002 must round to 20.00")
+	assert.True(t, decimal.RequireFromString("980.01").Equal(result.NetCredited))
+
+	// The real numeric(18,2) column must agree with what Withdraw reported -
+	// if the Go-side rounding ever drifted from Postgres's own, this is what
+	// would catch it.
+	accountRepository := accountrepo.NewGormAccountRepository(tx)
+	gotSavings, err := accountRepository.FindByID(ctx, savingsAcc.ID)
+	require.NoError(t, err)
+	// 10000 - 3000 (deposit) + 100 + 100 (the two free ones) + 980.01 (net of the satang withdrawal's fee)
+	assert.True(t, decimal.RequireFromString("8180.01").Equal(gotSavings.Balance))
+
+	ledgerRepository := txrepo.NewGormLedgerRepository(tx)
+	entries, err := ledgerRepository.FindByAccountID(ctx, savingsAcc.ID, 10, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, entries)
+	assert.True(t, decimal.RequireFromString("980.01").Equal(entries[0].Amount), "the persisted credit entry must match the rounded net, not the unrounded 980.0098")
+}
+
+// TestKapookGoalFlow_Withdraw_NoPrimaryAccount_FailsLoudly covers the
+// destination-resolution failure mode: a savings account exists but was
+// never flagged primary (the state registration/migration are meant to make
+// unreachable in production, but the server must still fail loudly rather
+// than guess if it's ever reached).
+func TestKapookGoalFlow_Withdraw_NoPrimaryAccount_FailsLoudly(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+	user := mustCreateUser(t, tx, "")
+	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
+	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000")) // deliberately never flagged primary
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	kapookSvc, termsRepo := newKapookService(tx)
+	require.NoError(t, termsRepo.Accept(ctx, user.ID))
+	_, err := kapookSvc.CreateGoal(ctx, user.ID, kapookAcc.ID, product.ID, decimal.RequireFromString("5000"))
+	require.NoError(t, err)
+	_, err = kapookSvc.Deposit(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("1000"))
+	require.NoError(t, err)
+
+	_, err = kapookSvc.Withdraw(ctx, user.ID, kapookAcc.ID, decimal.RequireFromString("500"))
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, apperror.KindNotFound, appErr.Kind)
+	assert.Equal(t, kapook.CodeNoPrimaryAccount, appErr.Code)
 }
