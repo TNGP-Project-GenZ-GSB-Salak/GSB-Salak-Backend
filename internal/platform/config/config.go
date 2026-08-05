@@ -51,13 +51,16 @@ type Config struct {
 	// RegistrationSavingsStartingBalance funds a new user's savings account
 	// at registration - in the spirit of SEED_DEMO_DATA/
 	// KAPOOK_COUNTDOWN_DURATION, a demo/test knob tuned without a code
-	// change. The committed default is 0, so this repository never says
-	// "every new customer receives money" - cmd/seed's demo user (฿50,000)
-	// is unaffected, since this governs registration only.
+	// change. The committed default is ฿1,000,000, so every new customer
+	// registers with money already in their savings account - cmd/seed's
+	// demo user (฿50,000) is unaffected, since this governs registration
+	// only.
 	RegistrationSavingsStartingBalance decimal.Decimal
 }
 
 func Load() Config {
+	startingBalance, _ := decimal.NewFromString("1000000.00")
+
 	cfg := Config{
 		AppEnv:   getEnv("APP_ENV", "local"),
 		HTTPPort: getEnv("HTTP_PORT", "8080"),
@@ -73,7 +76,7 @@ func Load() Config {
 		JWTExpiryMins:                      getEnvInt("JWT_EXPIRY_MINUTES", 60),
 		SeedDemoData:                       getEnvBool("SEED_DEMO_DATA", false),
 		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
-		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", decimal.Zero),
+		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", startingBalance),
 	}
 
 	cfg.MigrateDSN = getEnv("MIGRATE_DATABASE_URL", cfg.DB.URL())
