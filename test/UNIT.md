@@ -65,17 +65,22 @@ The typed-error package every service returns instead of raw `gorm`/stdlib error
 - All six constructors (`Validation`, `NotFound`, `Unauthorized`, `Forbidden`, `Conflict`, `Internal`) set the right `Kind`/`Message`/`Err`.
 - `HTTPStatus` maps every `Kind` to its HTTP status, **plus edge cases**: a plain non-`*Error`, a `nil` error, and an unrecognized `Kind` string all fall back to 500.
 
-### `internal/platform/jwtutil/jwt_test.go`
-JWT signing/parsing used by login and the auth middleware.
-- Sign → Parse round trip recovers the same user ID.
-- **Edge cases**: expired token (negative expiry), wrong secret, malformed tokens (empty string, non-JWT string, wrong segment count), a token signed with `alg: none` (must be rejected even though `token.Valid` would otherwise pass — the keyfunc explicitly checks for `*jwt.SigningMethodHMAC`), and confirming a failed parse always returns `uuid.Nil`.
+### `internal/platform/jwtutil/jwt_test.go`, `admin_test.go`
+JWT signing/parsing used by login and the auth middleware — customer (`Signer`) and admin (`AdminSigner`) each get an identical test shape, since they're deliberately parallel, separately-secreted types.
+- Sign → Parse round trip recovers the same user/admin ID.
+- **Edge cases**, both signers: expired token (negative expiry), wrong secret, malformed tokens (empty string, non-JWT string, wrong segment count), a token signed with `alg: none` (must be rejected even though `token.Valid` would otherwise pass — the keyfunc explicitly checks for `*jwt.SigningMethodHMAC`), and confirming a failed parse always returns `uuid.Nil`.
+- **Admin-only**: a validly-signed customer token, even under the same secret string, decodes to `uuid.Nil` (not a real admin) against `AdminSigner.Parse` — `AdminClaims` simply has no `user_id` field to read, so the JSON payload's `admin_id` stays zero-valued. Pins down the exact reason a customer token can never masquerade as an admin one.
 
-### `internal/platform/middleware/auth_test.go`, `cors_test.go`, `recover_test.go`, `requestlog_test.go`
+### `internal/platform/middleware/auth_test.go`, `admin_auth_test.go`, `cors_test.go`, `recover_test.go`, `requestlog_test.go`
 The HTTP middleware chain (plain `net/http.Handler`, composed by chi).
-- **Auth**: missing header, non-Bearer schemes (including a case-sensitivity check and a missing-space malformed header), invalid token, expired token, and the success path (context carries the parsed user ID through to the next handler). `UserIDFromContext` absent/present, plus a documented guarantee that a colliding-but-different context key type can't spoof a user ID (the key type is unexported).
+- **Auth / AdminAuth**: missing header, non-Bearer schemes (including a case-sensitivity check and a missing-space malformed header), invalid token, expired token, and the success path (context carries the parsed user/admin ID through to the next handler). `UserIDFromContext`/`AdminIDFromContext` absent/present, plus a documented guarantee that a colliding-but-different context key type can't spoof an ID (the key type is unexported, and admin's is its own distinct type from the customer one). **AdminAuth-only**: a real, validly-signed customer JWT is rejected outright (signed with a different secret than `ADMIN_JWT_SECRET`, so signature verification fails before `AdminClaims` decoding is ever reached) — the actual security property `AdminAuth` exists for, not just "some role check".
 - **CORS**: headers are set on normal requests; an `OPTIONS` preflight short-circuits with `204` and never reaches the wrapped handler.
 - **Recover**: a panic (string or `error` value) is converted to a `500` JSON body instead of crashing the process; a non-panicking request passes through unchanged.
 - **RequestLog**: status code and body pass through untouched; a handler that never explicitly writes a status still reports `200` (the chi `WrapResponseWriter` default).
+
+### `internal/admin/service/admin_service_test.go`
+`AdminService` — login for the minimal internal-ops identity (username + bcrypt hash, no roles). Structurally identical to `AuthService.Login` below, since it's the same anti-enumeration shape applied to a second, unrelated identity.
+- **Login**: success returns the admin and a token that parses back to the same ID via `AdminSigner`; unknown username and wrong password both return the *same* `Unauthorized` kind (no distinguishable 404, same anti-enumeration reasoning as customer login); an unexpected repo error → `Internal`; empty-string password never matches any real hash.
 
 ### `internal/user/service/auth_service_test.go`
 `AuthService` — registration, login, lookup.
@@ -101,7 +106,7 @@ Pure formatting/struct logic, no service involved.
 `SalakService` — product catalog, purchase validation, and ticket minting.
 - **ListProducts / GetProduct**: success; not-found; repo error → `Internal`; **an inactive product is rejected even though it exists** (`Validation`, not `NotFound`).
 - **ValidatePurchase**: zero and negative amounts; below minimum; above maximum; not a multiple of the step amount; and the two **inclusive boundary cases** (exactly at minimum, exactly at maximum — both must be valid, since the code uses `LessThan`/`GreaterThan`, not `<=`/`>=`).
-- **MintHolding**: success (verifies `Units` is computed as `amount / unitPrice` truncated, `productID` is forwarded to `ReserveTicketRange`, the reserved letter+range flow through unchanged into the holding — asserted against the exact value the fake returned, not just "some valid consonant", since a random letter is exactly the bug this now guards against — and `MaturityDate` is `PurchaseDate + TermMonths`); an amount that isn't an exact multiple of the unit price **truncates down** rather than erroring (documents current behavior — full-amount validation happens earlier in `ValidatePurchase`, not here); an amount below one whole unit price is rejected; product not found; product lookup error; ticket-range reservation failure (both the generic-error → `Internal` path and, still only integration-tested today, the `ErrUnitsExceedLetterCapacity` → `Validation` path); holding create failure.
+- **MintHolding**: success (verifies `Units` is computed as `amount / unitPrice` truncated, `productID` is forwarded to `ReserveTicketRange`, the reserved letter+range flow through unchanged into the holding — asserted against the exact value the fake returned, not just "some valid consonant", since a random letter is exactly the bug this now guards against — and `MaturityDate` is `PurchaseDate + TermMonths`); an amount that isn't an exact multiple of the unit price **truncates down** rather than erroring (documents current behavior — full-amount validation happens earlier in `ValidatePurchase`, not here); an amount below one whole unit price is rejected; product not found; product lookup error; ticket-range reservation failure (both the generic-error → `Internal` path and the `ErrUnitsExceedLetterCapacity` → `Validation` path); holding create failure.
 - **ListHoldingsByAccount**: success only after the ownership check passes (and confirms the correct `userID`/`accountID` were forwarded to `account.Service.GetByID`); an ownership-check failure is propagated **verbatim** (not rewrapped); holdings-repo error → `Internal`; no holdings is an empty slice, not an error.
 
 ### `internal/transaction/service/buy_salak_service_test.go`
@@ -160,6 +165,6 @@ go build ./... && go vet ./... && gofmt -l .   # sanity-check alongside tests
 ```
 
 All of the above are clean as of this writing: `go build`, `go vet`, and
-`gofmt -l .` report nothing, and every test passes (354 passing test cases —
-top-level tests plus table-driven subtests — across 25 `_test.go` files
+`gofmt -l .` report nothing, and every test passes (384 passing test cases —
+top-level tests plus table-driven subtests — across 28 `_test.go` files
 under `internal/`).

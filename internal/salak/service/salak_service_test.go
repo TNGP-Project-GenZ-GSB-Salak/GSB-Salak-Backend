@@ -548,6 +548,22 @@ func TestSalakService_MintHolding(t *testing.T) {
 		assertAppErrKind(t, err, apperror.KindInternal)
 	})
 
+	// Distinguished from the generic-error case above: a request that can
+	// never fit in a single letter's block is the customer's input being
+	// unactionable (Validation), not a system fault (Internal) - the exact
+	// mapping MintHolding added alongside the per-product ticket-sequence
+	// redesign (see internal/salak/ports.go's ErrUnitsExceedLetterCapacity).
+	t.Run("units exceeding a single letter's capacity returns validation error", func(t *testing.T) {
+		product := activeProduct()
+		products := newFakeProductRepo(product)
+		holdings := newFakeHoldingRepo()
+		holdings.reserveErr = salak.ErrUnitsExceedLetterCapacity
+		svc := service.NewSalakService(products, holdings, &fakeAccountService{}, newFakeDrawDateRepo(), testClock())
+
+		_, err := svc.MintHolding(context.Background(), nil, accountID, product.ID, mustDecimal(t, "100"))
+		assertAppErrKind(t, err, apperror.KindValidation)
+	})
+
 	t.Run("holding create failure returns internal error", func(t *testing.T) {
 		product := activeProduct()
 		products := newFakeProductRepo(product)
