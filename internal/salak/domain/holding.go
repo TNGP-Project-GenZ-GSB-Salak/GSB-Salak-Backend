@@ -19,7 +19,12 @@ type Holding struct {
 	PurchaseAmount decimal.Decimal
 	PurchaseDate   time.Time
 	MaturityDate   time.Time
-	CreatedAt      time.Time
+	// SettledAt is nil until SettleMaturedHolding has paid out this
+	// holding's principal + interest - the idempotency guard against
+	// settling the same holding twice, and the eventual claim predicate
+	// for an automated worker, if one is ever added.
+	SettledAt *time.Time
+	CreatedAt time.Time
 }
 
 func (Holding) TableName() string {

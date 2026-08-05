@@ -15,6 +15,17 @@ type LedgerRepository interface {
 	FindByAccountID(ctx context.Context, accountID uuid.UUID, limit, offset int) ([]domain.LedgerEntry, error)
 }
 
+// SettlementReceipt is returned after a successful SettleMaturedHolding.
+type SettlementReceipt struct {
+	HoldingID           uuid.UUID
+	Principal           decimal.Decimal
+	Interest            decimal.Decimal
+	Total               decimal.Decimal
+	PrimaryAccountID    uuid.UUID
+	PrimaryBalanceAfter decimal.Decimal
+	SettledAt           string
+}
+
 // BuySalakReceipt is returned to the caller after a successful buy-salak transaction.
 type BuySalakReceipt struct {
 	ReferenceID                uuid.UUID
@@ -52,4 +63,19 @@ type Service interface {
 	// purchases don't carry a badge choice).
 	BuySalakForKapook(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID, productID uuid.UUID, amount decimal.Decimal) (BuySalakReceipt, error)
 	ListHistory(ctx context.Context, userID, accountID uuid.UUID, limit, offset int) ([]domain.LedgerEntry, error)
+	// SettleMaturedHolding pays out holdingID's principal + interest to its
+	// owning user's primary account, regardless of whether the holding's
+	// real MaturityDate has passed - callers decide when this runs (today,
+	// only the admin-gated force-settle endpoint; a future time-driven
+	// worker would be a second caller, not a change to this method). Works
+	// uniformly for any holding, Kapook-originated or not - nothing here is
+	// aware of kapook. Opens its own top-level transaction; see
+	// SettleMaturedHoldingInTx for the variant a caller with its own
+	// already-open tx (kapook.Service.SettleMaturedHolding) composes with.
+	SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (SettlementReceipt, error)
+	// SettleMaturedHoldingInTx is SettleMaturedHolding's tx-supplied
+	// variant, mirroring BuySalakForKapook's relationship to BuySalak - the
+	// same money-movement logic, run inside the caller's own transaction so
+	// it can be composed atomically with kapook's own bookkeeping.
+	SettleMaturedHoldingInTx(ctx context.Context, tx *gorm.DB, holdingID uuid.UUID) (SettlementReceipt, error)
 }

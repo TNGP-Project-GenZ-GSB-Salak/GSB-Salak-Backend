@@ -49,6 +49,14 @@ type HoldingRepository interface {
 	// ReserveTicketRange atomically reserves `units` contiguous ticket numbers
 	// under a row lock on the ticket_sequence singleton, returning [start, end].
 	ReserveTicketRange(ctx context.Context, tx *gorm.DB, units int64) (start, end int64, err error)
+	// FindForUpdate locks and returns holdingID - the settlement service's
+	// idempotency check (SettledAt != nil) and its money movement must see
+	// a consistent row, so this is always called from inside a tx.
+	FindForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error)
+	// MarkSettled records that a holding's principal + interest have been
+	// paid out. Re-marking an already-settled holding never happens - the
+	// caller checks SettledAt from the same locked row first.
+	MarkSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error
 }
 
 // Service is the public surface the transaction domain (and http layer) depend on.
@@ -70,4 +78,11 @@ type Service interface {
 	// ListHoldingsByAccount verifies userID owns accountID (via account.Service)
 	// before returning that account's holdings.
 	ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]domain.Holding, error)
+	// FindHoldingForUpdate and MarkHoldingSettled are the settlement
+	// service's (internal/transaction) only way to touch a holding's
+	// SettledAt state - kept on Service rather than exposing
+	// HoldingRepository itself cross-domain, matching how every other
+	// cross-domain caller only ever depends on salak.Service.
+	FindHoldingForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error)
+	MarkHoldingSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error
 }

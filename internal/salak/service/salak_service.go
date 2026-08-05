@@ -171,8 +171,13 @@ func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, 
 		TicketEnd:      end,
 		PurchaseAmount: amount,
 		PurchaseDate:   purchaseDate,
-		MaturityDate:   purchaseDate.AddDate(0, product.TermMonths, 0),
-		CreatedAt:      now,
+		// Official rule (the 1-year sheet's own worked example): deposit 3
+		// ก.ค. matures 2 ก.ค. the following year - purchase + term - 1 day,
+		// not purchase + term. Principal + interest are credited the day
+		// AFTER MaturityDate (see SettleMaturedHolding), so this date is
+		// the last day the holding is still "live," not the payout date.
+		MaturityDate: purchaseDate.AddDate(0, product.TermMonths, 0).AddDate(0, 0, -1),
+		CreatedAt:    now,
 	}
 
 	if err := s.holdings.Create(ctx, tx, holding); err != nil {
@@ -192,4 +197,21 @@ func (s *SalakService) ListHoldingsByAccount(ctx context.Context, userID, accoun
 		return nil, apperror.Internal("failed to list salak holdings", err)
 	}
 	return holdings, nil
+}
+
+func (s *SalakService) FindHoldingForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error) {
+	h, err := s.holdings.FindForUpdate(ctx, tx, id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Holding{}, apperror.NotFound("salak holding not found")
+	} else if err != nil {
+		return domain.Holding{}, apperror.Internal("failed to look up salak holding", err)
+	}
+	return h, nil
+}
+
+func (s *SalakService) MarkHoldingSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	if err := s.holdings.MarkSettled(ctx, tx, id, settledAt); err != nil {
+		return apperror.Internal("failed to mark salak holding settled", err)
+	}
+	return nil
 }

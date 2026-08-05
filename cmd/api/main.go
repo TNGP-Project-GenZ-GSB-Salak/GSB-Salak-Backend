@@ -19,6 +19,10 @@ import (
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
 	accountsvc "github.com/ciaabcdefg/gsb-salak-backend/internal/account/service"
 
+	adminhttp "github.com/ciaabcdefg/gsb-salak-backend/internal/admin/http"
+	adminrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/admin/repository"
+	adminsvc "github.com/ciaabcdefg/gsb-salak-backend/internal/admin/service"
+
 	badgerepo "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/repository"
 	badgesvc "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
 
@@ -57,11 +61,13 @@ func main() {
 	}
 
 	signer := jwtutil.NewSigner(cfg.JWTSecret, cfg.JWTExpiryMins)
+	adminSigner := jwtutil.NewAdminSigner(cfg.AdminJWTSecret, cfg.JWTExpiryMins)
 
 	var clk clock.Clock = clock.Real{}
 
 	// Repositories
 	userRepository := userrepo.NewGormUserRepository(gdb)
+	adminRepository := adminrepo.NewGormAdminRepository(gdb)
 	accountRepository := accountrepo.NewGormAccountRepository(gdb)
 	productRepository := salakrepo.NewGormProductRepository(gdb)
 	holdingRepository := salakrepo.NewGormHoldingRepository(gdb)
@@ -79,6 +85,7 @@ func main() {
 	badgeService := badgesvc.NewBadgeService(badgeRepository)
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService, clk)
 	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService, gdb, ledgerRepository, kapookTransactionRepository, clk, buySalakService, cfg.KapookCountdownDuration)
+	adminService := adminsvc.NewAdminService(adminRepository, adminSigner)
 
 	if activeProducts, err := productRepository.ListActive(context.Background()); err != nil {
 		log.Printf("WARNING: failed to check draw-date calendar coverage: %v", err)
@@ -94,11 +101,13 @@ func main() {
 	salakHandler := salakhttp.NewHandler(salakService)
 	transactionHandler := transactionhttp.NewHandler(buySalakService)
 	kapookHandler := kapookhttp.NewHandler(kapookService)
+	adminHandler := adminhttp.NewHandler(adminService, kapookService)
 
 	router := httpserver.NewRouter()
 
 	router.Route("/api/v1", func(r chi.Router) {
 		userHandler.RegisterRoutes(r)
+		adminHandler.RegisterPublicRoutes(r)
 
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(signer))
@@ -106,6 +115,11 @@ func main() {
 			salakHandler.RegisterRoutes(r)
 			transactionHandler.RegisterRoutes(r)
 			kapookHandler.RegisterRoutes(r)
+		})
+
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AdminAuth(adminSigner))
+			adminHandler.RegisterAdminRoutes(r)
 		})
 	})
 

@@ -15,6 +15,7 @@ import (
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
 	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/transaction"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -57,6 +58,9 @@ func (f *fakeGoalRepo) UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goa
 	return nil
 }
 func (f *fakeGoalRepo) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal, stillActive bool) error {
+	return nil
+}
+func (f *fakeGoalRepo) UpdateAfterExpiration(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal) error {
 	return nil
 }
 func (f *fakeGoalRepo) MarkGoalReached(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, reachedAt time.Time) error {
@@ -163,6 +167,9 @@ func (f *fakeKapookService) GetGoalHistory(ctx context.Context, userID, goalID u
 func (f *fakeKapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
 	return kapook.BuyFromGoalResult{}, nil
 }
+func (f *fakeKapookService) SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (transaction.SettlementReceipt, error) {
+	return transaction.SettlementReceipt{}, nil
+}
 func (f *fakeKapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
 	f.calls = append(f.calls, buyFromGoalInTxCall{userID, kapookAccountID, salakAccountID, amount})
 	if f.buyErr != nil {
@@ -205,6 +212,14 @@ func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, account
 }
 func (f *fakeSalakService) ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]salakdomain.Holding, error) {
 	return nil, nil
+}
+
+func (f *fakeSalakService) FindHoldingForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (salakdomain.Holding, error) {
+	return salakdomain.Holding{}, nil
+}
+
+func (f *fakeSalakService) MarkHoldingSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	return nil
 }
 
 // --- helpers -------------------------------------------------------------

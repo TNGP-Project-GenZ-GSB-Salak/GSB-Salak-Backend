@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/google/uuid"
@@ -50,4 +51,20 @@ func (r *GormHoldingRepository) ReserveTicketRange(ctx context.Context, tx *gorm
 	}
 
 	return start, end, nil
+}
+
+func (r *GormHoldingRepository) FindForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error) {
+	var h domain.Holding
+	err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", id).
+		First(&h).Error
+	return h, err
+}
+
+func (r *GormHoldingRepository) MarkSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Holding{}).
+		Where("id = ?", id).
+		Update("settled_at", settledAt).Error
 }

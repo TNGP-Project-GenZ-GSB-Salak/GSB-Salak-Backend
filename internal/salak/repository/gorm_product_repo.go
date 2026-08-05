@@ -46,7 +46,7 @@ func (r *GormProductRepository) Upsert(ctx context.Context, p *domain.Product) e
 	return r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "code"}},
-			DoUpdates: clause.AssignmentColumns([]string{"name", "term_months", "unit_price", "min_purchase", "max_purchase", "step_amount", "is_active", "updated_at"}),
+			DoUpdates: clause.AssignmentColumns([]string{"name", "term_months", "unit_price", "min_purchase", "max_purchase", "step_amount", "maturity_interest_per_unit", "is_active", "updated_at"}),
 		}).
 		Create(p).Error
 }

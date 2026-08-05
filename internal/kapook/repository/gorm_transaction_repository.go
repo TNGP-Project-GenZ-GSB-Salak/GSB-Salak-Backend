@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
@@ -45,6 +46,20 @@ func (r *GormTransactionRepository) ListByGoal(ctx context.Context, goalID uuid.
 		Offset(offset).
 		Find(&txns).Error
 	return txns, err
+}
+
+func (r *GormTransactionRepository) FindByHoldingID(ctx context.Context, holdingID uuid.UUID) (*domain.Transaction, error) {
+	var t domain.Transaction
+	err := r.db.WithContext(ctx).
+		Where("holding_id = ? AND type = ?", holdingID, domain.TransactionBuySalak).
+		First(&t).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 func (r *GormTransactionRepository) SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (int64, int, error) {

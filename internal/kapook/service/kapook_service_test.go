@@ -88,6 +88,10 @@ type fakeGoalRepo struct {
 	updateAfterWithdrawalCalled bool
 	lastMarkGoalReachedID       uuid.UUID
 	lastMarkGoalReachedAt       time.Time
+
+	updateAfterExpirationCalled  bool
+	lastExpirationGoalID         uuid.UUID
+	lastExpirationNewSalakAmount decimal.Decimal
 }
 
 func newFakeGoalRepo() *fakeGoalRepo {
@@ -184,6 +188,13 @@ func (f *fakeGoalRepo) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, g
 			f.activeByAccount[accID] = g
 		}
 	}
+	return nil
+}
+
+func (f *fakeGoalRepo) UpdateAfterExpiration(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal) error {
+	f.updateAfterExpirationCalled = true
+	f.lastExpirationGoalID = goalID
+	f.lastExpirationNewSalakAmount = newSalakAmount
 	return nil
 }
 
@@ -350,6 +361,14 @@ func (f *fakeSalakService) ListHoldingsByAccount(ctx context.Context, userID, ac
 	return nil, nil
 }
 
+func (f *fakeSalakService) FindHoldingForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (salakdomain.Holding, error) {
+	return salakdomain.Holding{}, nil
+}
+
+func (f *fakeSalakService) MarkHoldingSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	return nil
+}
+
 // fakeLedgerRepo is a hand-rolled implementation of transaction.LedgerRepository.
 type fakeLedgerRepo struct {
 	createErr error
@@ -399,6 +418,15 @@ func (f *fakeTransactionRepo) Create(ctx context.Context, tx *gorm.DB, t *kapook
 	return nil
 }
 
+func (f *fakeTransactionRepo) FindByHoldingID(ctx context.Context, holdingID uuid.UUID) (*kapookdomain.Transaction, error) {
+	for i := range f.created {
+		if f.created[i].HoldingID != nil && *f.created[i].HoldingID == holdingID {
+			return &f.created[i], nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeTransactionRepo) CountByGoalAndTypesInWindow(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, types []kapookdomain.TransactionType, from, to time.Time) (int, error) {
 	f.lastCountGoalID = goalID
 	if f.countErr != nil {
@@ -435,6 +463,9 @@ type fakeBuySalakService struct {
 	lastSalakAccountID  uuid.UUID
 	lastAmount          decimal.Decimal
 	callCount           int
+
+	settleResult transaction.SettlementReceipt
+	settleErr    error
 }
 
 func (f *fakeBuySalakService) BuySalak(ctx context.Context, userID, fundingAccountID, salakAccountID, productID uuid.UUID, badgeID *uuid.UUID, amount decimal.Decimal) (transaction.BuySalakReceipt, error) {
@@ -454,6 +485,17 @@ func (f *fakeBuySalakService) BuySalakForKapook(ctx context.Context, tx *gorm.DB
 
 func (f *fakeBuySalakService) ListHistory(ctx context.Context, userID, accountID uuid.UUID, limit, offset int) ([]txdomain.LedgerEntry, error) {
 	return nil, nil
+}
+
+func (f *fakeBuySalakService) SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (transaction.SettlementReceipt, error) {
+	return f.SettleMaturedHoldingInTx(ctx, nil, holdingID)
+}
+
+func (f *fakeBuySalakService) SettleMaturedHoldingInTx(ctx context.Context, tx *gorm.DB, holdingID uuid.UUID) (transaction.SettlementReceipt, error) {
+	if f.settleErr != nil {
+		return transaction.SettlementReceipt{}, f.settleErr
+	}
+	return f.settleResult, nil
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -2193,5 +2235,116 @@ func TestKapookService_GetGoalHistory(t *testing.T) {
 		_, err = svc.GetGoalHistory(context.Background(), userID, goalID, 500, 0)
 		require.NoError(t, err)
 		assert.Equal(t, 100, transactions.lastListLimit, "limit caps at 100")
+	})
+}
+
+// --- SettleMaturedHolding ----------------------------------------------------
+
+func TestKapookService_SettleMaturedHolding(t *testing.T) {
+	t.Run("directly-purchased holding: money moves, no kapook bookkeeping touched", func(t *testing.T) {
+		holdingID := uuid.New()
+		buySalakSvc := &fakeBuySalakService{}
+		buySalakSvc.settleResult = transaction.SettlementReceipt{HoldingID: holdingID, Principal: decimal.RequireFromString("1000")}
+		transactions := &fakeTransactionRepo{} // FindByHoldingID finds nothing - never linked to a goal
+		goals := newFakeGoalRepo()
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, &fakeAccountService{}, db, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
+
+		receipt, err := svc.SettleMaturedHolding(context.Background(), holdingID)
+		require.NoError(t, err)
+		assert.Equal(t, holdingID, receipt.HoldingID)
+		assert.False(t, goals.updateAfterExpirationCalled, "no goal to update for a non-Kapook holding")
+		assert.Empty(t, transactions.created, "no salak_expiration row for a non-Kapook holding")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("Kapook-originated holding: decrements SalakAmount and records a salak_expiration row", func(t *testing.T) {
+		holdingID, goalID, kapookAccID := uuid.New(), uuid.New(), uuid.New()
+		buySalakSvc := &fakeBuySalakService{}
+		buySalakSvc.settleResult = transaction.SettlementReceipt{HoldingID: holdingID, Principal: decimal.RequireFromString("1000")}
+
+		transactions := &fakeTransactionRepo{
+			created: []kapookdomain.Transaction{
+				{ID: uuid.New(), Type: kapookdomain.TransactionBuySalak, GoalID: goalID, KapookAccountID: kapookAccID, HoldingID: &holdingID},
+			},
+		}
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{
+			goalID: {ID: goalID, AccountID: kapookAccID, SalakAmount: decimal.RequireFromString("1500"), IsActive: false},
+		}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, &fakeAccountService{}, db, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
+
+		receipt, err := svc.SettleMaturedHolding(context.Background(), holdingID)
+		require.NoError(t, err)
+		assert.Equal(t, holdingID, receipt.HoldingID)
+
+		require.True(t, goals.updateAfterExpirationCalled)
+		assert.Equal(t, goalID, goals.lastExpirationGoalID)
+		assert.True(t, decimal.RequireFromString("500").Equal(goals.lastExpirationNewSalakAmount), "1500 - 1000 principal")
+
+		require.Len(t, transactions.created, 2, "the pre-existing buy_salak row, plus one new salak_expiration row")
+		expirationRow := transactions.created[1]
+		assert.Equal(t, kapookdomain.TransactionSalakExpiration, expirationRow.Type)
+		assert.Equal(t, goalID, expirationRow.GoalID)
+		assert.Equal(t, kapookAccID, expirationRow.KapookAccountID)
+		require.NotNil(t, expirationRow.HoldingID)
+		assert.Equal(t, holdingID, *expirationRow.HoldingID)
+		assert.True(t, decimal.RequireFromString("1000").Equal(expirationRow.Amount))
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("a goal's SalakAmount never goes negative even if principal exceeds it", func(t *testing.T) {
+		holdingID, goalID, kapookAccID := uuid.New(), uuid.New(), uuid.New()
+		buySalakSvc := &fakeBuySalakService{}
+		buySalakSvc.settleResult = transaction.SettlementReceipt{HoldingID: holdingID, Principal: decimal.RequireFromString("1000")}
+
+		transactions := &fakeTransactionRepo{
+			created: []kapookdomain.Transaction{
+				{ID: uuid.New(), Type: kapookdomain.TransactionBuySalak, GoalID: goalID, KapookAccountID: kapookAccID, HoldingID: &holdingID},
+			},
+		}
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{
+			goalID: {ID: goalID, AccountID: kapookAccID, SalakAmount: decimal.RequireFromString("400")},
+		}
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, &fakeAccountService{}, db, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
+
+		_, err := svc.SettleMaturedHolding(context.Background(), holdingID)
+		require.NoError(t, err)
+		assert.True(t, decimal.Zero.Equal(goals.lastExpirationNewSalakAmount), "clamped at zero, never negative")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("settlement failure rolls back and is propagated verbatim, no kapook bookkeeping attempted", func(t *testing.T) {
+		holdingID := uuid.New()
+		buySalakSvc := &fakeBuySalakService{}
+		buySalakSvc.settleErr = apperror.Conflict("holding has already been settled")
+		transactions := &fakeTransactionRepo{}
+		goals := newFakeGoalRepo()
+
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, &fakeAccountService{}, db, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
+
+		_, err := svc.SettleMaturedHolding(context.Background(), holdingID)
+		assertAppErrKind(t, err, apperror.KindConflict)
+		assert.False(t, goals.updateAfterExpirationCalled)
+		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

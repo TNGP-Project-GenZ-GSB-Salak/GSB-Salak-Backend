@@ -17,8 +17,13 @@ type Product struct {
 	MaxPurchase decimal.Decimal
 	StepAmount  decimal.Decimal
 	IsActive    bool
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// MaturityInterestPerUnit is the baht payout per unit at maturity - the
+	// sales sheets lead with this figure directly, so interest = units *
+	// MaturityInterestPerUnit is exact with no rounding decision needed
+	// (see migration 000020).
+	MaturityInterestPerUnit decimal.Decimal
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 func (Product) TableName() string {

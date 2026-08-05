@@ -42,6 +42,9 @@ type fakeAccountService struct {
 
 	debitCalls  []decimal.Decimal
 	creditCalls []decimal.Decimal
+
+	primaryAccountResult accountdomain.Account
+	primaryAccountErr    error
 }
 
 func newFakeAccountService() *fakeAccountService {
@@ -97,7 +100,10 @@ func (f *fakeAccountService) Create(ctx context.Context, tx *gorm.DB, userID uui
 }
 
 func (f *fakeAccountService) GetPrimaryAccount(ctx context.Context, userID uuid.UUID) (accountdomain.Account, error) {
-	return accountdomain.Account{}, nil
+	if f.primaryAccountErr != nil {
+		return accountdomain.Account{}, f.primaryAccountErr
+	}
+	return f.primaryAccountResult, nil
 }
 
 // fakeSalakService is a hand-rolled implementation of salak.Service.
@@ -114,6 +120,11 @@ type fakeSalakService struct {
 
 	mintHoldingResult salakdomain.Holding
 	mintHoldingErr    error
+
+	findHoldingForUpdateResult salakdomain.Holding
+	findHoldingForUpdateErr    error
+	markHoldingSettledErr      error
+	lastMarkSettledID          uuid.UUID
 }
 
 func (f *fakeSalakService) ListProducts(ctx context.Context) ([]salakdomain.Product, error) {
@@ -148,6 +159,18 @@ func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, account
 
 func (f *fakeSalakService) ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]salakdomain.Holding, error) {
 	return nil, nil
+}
+
+func (f *fakeSalakService) FindHoldingForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (salakdomain.Holding, error) {
+	if f.findHoldingForUpdateErr != nil {
+		return salakdomain.Holding{}, f.findHoldingForUpdateErr
+	}
+	return f.findHoldingForUpdateResult, nil
+}
+
+func (f *fakeSalakService) MarkHoldingSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	f.lastMarkSettledID = id
+	return f.markHoldingSettledErr
 }
 
 // fakeLedgerRepo is a hand-rolled implementation of transaction.LedgerRepository.

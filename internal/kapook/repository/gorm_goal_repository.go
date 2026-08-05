@@ -73,6 +73,13 @@ func (r *GormGoalRepository) UpdateAfterPurchase(ctx context.Context, tx *gorm.D
 		}).Error
 }
 
+func (r *GormGoalRepository) UpdateAfterExpiration(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Update("salak_amount", newSalakAmount).Error
+}
+
 func (r *GormGoalRepository) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal, stillActive bool) error {
 	return tx.WithContext(ctx).
 		Model(&domain.Goal{}).

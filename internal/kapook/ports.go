@@ -74,6 +74,13 @@ type GoalRepository interface {
 	// rejection. Re-setting the same date on a later tick (the goal is
 	// still due, still blocked) is a harmless no-op update, not an error.
 	SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error
+	// UpdateAfterExpiration is the settlement wrapper's write path when a
+	// matured holding traces back to a goal: SalakAmount shrinks to
+	// newSalakAmount only - unlike UpdateAfterPurchase, IsActive and
+	// AutoPurchaseDeferredUntil are untouched, since the goal is almost
+	// always already closed by the time its Salak matures a year+ later,
+	// and an expiration is not the kind of event that should reopen one.
+	UpdateAfterExpiration(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal) error
 }
 
 // TransactionRepository owns the kapook_transactions ledger of movements
@@ -100,6 +107,11 @@ type TransactionRepository interface {
 	// is - a read-only, server-side scope by goal so a previous goal's rows
 	// on the same kapook account can never leak into this one's history.
 	ListByGoal(ctx context.Context, goalID uuid.UUID, limit, offset int) ([]domain.Transaction, error)
+	// FindByHoldingID returns the buy_salak row that minted holdingID, or
+	// nil (not an error) if holdingID was never bought through a Kapook
+	// goal - the settlement wrapper's way of telling a Kapook-originated
+	// holding apart from a directly-purchased one.
+	FindByHoldingID(ctx context.Context, holdingID uuid.UUID) (*domain.Transaction, error)
 }
 
 // WithdrawalStatus describes a goal's free-withdrawal allowance for the
@@ -264,4 +276,13 @@ type Service interface {
 	// transaction.Service.ListHistory's own defaults (non-positive limit
 	// defaults to 20, capped at 100; negative offset clamps to 0).
 	GetGoalHistory(ctx context.Context, userID, goalID uuid.UUID, limit, offset int) ([]HistoryEntry, error)
+	// SettleMaturedHolding is the single entry point the admin-gated
+	// force-settle endpoint calls, correct for any holding whether or not
+	// it was ever bought through a Kapook goal: it delegates the actual
+	// money movement to transaction.Service.SettleMaturedHoldingInTx, then
+	// - only if holdingID traces back to a buy_salak kapook_transactions
+	// row - additionally decrements that goal's SalakAmount and records a
+	// salak_expiration row, all inside one transaction. transaction.Service
+	// itself is never given a reason to know kapook exists.
+	SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (transaction.SettlementReceipt, error)
 }

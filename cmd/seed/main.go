@@ -7,6 +7,7 @@ import (
 	"time"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
+	admindomain "github.com/ciaabcdefg/gsb-salak-backend/internal/admin/domain"
 	kapookdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/config"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/db"
@@ -53,26 +54,28 @@ func main() {
 
 	products := []salakdomain.Product{
 		{
-			ID:          uuid.New(),
-			Code:        "SALAK_1Y",
-			Name:        "Digital Salak 1-Year",
-			TermMonths:  12,
-			UnitPrice:   decimal.NewFromInt(100),
-			MinPurchase: decimal.NewFromInt(1000),
-			MaxPurchase: decimal.NewFromInt(10_000_000),
-			StepAmount:  decimal.NewFromInt(1000),
-			IsActive:    true,
+			ID:                      uuid.New(),
+			Code:                    "SALAK_1Y",
+			Name:                    "Digital Salak 1-Year",
+			TermMonths:              12,
+			UnitPrice:               decimal.NewFromInt(100),
+			MinPurchase:             decimal.NewFromInt(1000),
+			MaxPurchase:             decimal.NewFromInt(10_000_000),
+			StepAmount:              decimal.NewFromInt(1000),
+			MaturityInterestPerUnit: decimal.NewFromFloat(0.15),
+			IsActive:                true,
 		},
 		{
-			ID:          uuid.New(),
-			Code:        "SALAK_2Y",
-			Name:        "Digital Salak 2-Year",
-			TermMonths:  24,
-			UnitPrice:   decimal.NewFromInt(100),
-			MinPurchase: decimal.NewFromInt(1000),
-			MaxPurchase: decimal.NewFromInt(10_000_000),
-			StepAmount:  decimal.NewFromInt(1000),
-			IsActive:    true,
+			ID:                      uuid.New(),
+			Code:                    "SALAK_2Y",
+			Name:                    "Digital Salak 2-Year",
+			TermMonths:              24,
+			UnitPrice:               decimal.NewFromInt(100),
+			MinPurchase:             decimal.NewFromInt(1000),
+			MaxPurchase:             decimal.NewFromInt(10_000_000),
+			StepAmount:              decimal.NewFromInt(1000),
+			MaturityInterestPerUnit: decimal.NewFromFloat(0.50),
+			IsActive:                true,
 		},
 	}
 
@@ -103,6 +106,32 @@ func main() {
 			}
 		}
 		log.Printf("seeded %d draw dates for %s (%d-%d)", len(drawDates), product.Code, years[0], years[len(years)-1])
+	}
+
+	// The admin credential is seeded unconditionally (not gated behind
+	// SEED_DEMO_DATA) - an admin must exist for the force-settle endpoint
+	// to be usable at all, regardless of whether other demo data is
+	// seeded. Only attempted when both env vars are set; ADMIN_USERNAME/
+	// ADMIN_PASSWORD are never given a committed default the way
+	// demopass123 is, since an admin credential is more sensitive.
+	if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
+		log.Println("ADMIN_USERNAME/ADMIN_PASSWORD not set, skipping admin credential")
+	} else {
+		adminHash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			log.Fatalf("failed to hash admin password: %v", err)
+		}
+		adminRow := admindomain.Admin{
+			ID:           uuid.New(),
+			Username:     cfg.AdminUsername,
+			PasswordHash: string(adminHash),
+		}
+		if err := gdb.WithContext(ctx).
+			Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "username"}}, DoNothing: true}).
+			Create(&adminRow).Error; err != nil {
+			log.Fatalf("failed to seed admin credential: %v", err)
+		}
+		log.Printf("seeded admin credential: %s", cfg.AdminUsername)
 	}
 
 	if !cfg.SeedDemoData {

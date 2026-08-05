@@ -118,6 +118,30 @@ func (f *fakeHoldingRepo) ReserveTicketRange(ctx context.Context, tx *gorm.DB, u
 	return f.reserveStart, f.reserveEnd, nil
 }
 
+func (f *fakeHoldingRepo) FindForUpdate(ctx context.Context, tx *gorm.DB, id uuid.UUID) (domain.Holding, error) {
+	for _, holdings := range f.byAccountID {
+		for _, h := range holdings {
+			if h.ID == id {
+				return h, nil
+			}
+		}
+	}
+	return domain.Holding{}, gorm.ErrRecordNotFound
+}
+
+func (f *fakeHoldingRepo) MarkSettled(ctx context.Context, tx *gorm.DB, id uuid.UUID, settledAt time.Time) error {
+	for accID, holdings := range f.byAccountID {
+		for i, h := range holdings {
+			if h.ID == id {
+				holdings[i].SettledAt = &settledAt
+				f.byAccountID[accID] = holdings
+				return nil
+			}
+		}
+	}
+	return gorm.ErrRecordNotFound
+}
+
 // fakeDrawDateRepo is a hand-rolled implementation of salak.DrawDateRepository.
 type fakeDrawDateRepo struct {
 	isDrawDay    bool
@@ -452,7 +476,9 @@ func TestSalakService_MintHolding(t *testing.T) {
 		// clock seam rather than the wall clock.
 		wantPurchaseDate := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 		assert.Equal(t, wantPurchaseDate, h.PurchaseDate)
-		assert.Equal(t, wantPurchaseDate.AddDate(0, product.TermMonths, 0), h.MaturityDate)
+		// purchase + term - 1 day (the official rule, not purchase + term -
+		// see the fixed off-by-one bug in MintHolding).
+		assert.Equal(t, wantPurchaseDate.AddDate(0, product.TermMonths, 0).AddDate(0, 0, -1), h.MaturityDate)
 		letterRunes := []rune(h.TicketLetter)
 		require.Len(t, letterRunes, 1)
 		assert.True(t, letterRunes[0] >= 0x0E01 && letterRunes[0] <= 0x0E2E, "ticket letter %q out of the Thai consonant range", h.TicketLetter)

@@ -769,3 +769,52 @@ func (s *KapookService) buyFromGoalCore(ctx context.Context, tx *gorm.DB, userID
 	goal.IsActive = !goalCompleted
 	return kapook.BuyFromGoalResult{Goal: goal, Receipt: receipt, GoalCompleted: goalCompleted}, nil
 }
+
+// SettleMaturedHolding is documented on kapook.Service. The money movement
+// and the Kapook-conditional bookkeeping share one transaction, opened
+// here, so a holding is never left settled with its originating goal's
+// SalakAmount stale (or vice versa) if either half fails.
+func (s *KapookService) SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (transaction.SettlementReceipt, error) {
+	var receipt transaction.SettlementReceipt
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var err error
+		receipt, err = s.buySalakSvc.SettleMaturedHoldingInTx(ctx, tx, holdingID)
+		if err != nil {
+			return err
+		}
+
+		kapookTxn, err := s.transactions.FindByHoldingID(ctx, holdingID)
+		if err != nil {
+			return apperror.Internal("failed to look up kapook transaction for holding", err)
+		}
+		if kapookTxn == nil {
+			return nil // not Kapook-originated - nothing more to do
+		}
+
+		goal, err := s.goals.FindByID(ctx, kapookTxn.GoalID)
+		if err != nil {
+			return apperror.Internal("failed to look up goal for matured holding", err)
+		}
+		newSalakAmount := decimal.Max(decimal.Zero, goal.SalakAmount.Sub(receipt.Principal))
+		if err := s.goals.UpdateAfterExpiration(ctx, tx, goal.ID, newSalakAmount); err != nil {
+			return apperror.Internal("failed to update goal after expiration", err)
+		}
+
+		expirationTx := &domain.Transaction{
+			ID:              uuid.New(),
+			Type:            domain.TransactionSalakExpiration,
+			Amount:          receipt.Principal,
+			KapookAccountID: kapookTxn.KapookAccountID,
+			GoalID:          goal.ID,
+			HoldingID:       &holdingID,
+		}
+		if err := s.transactions.Create(ctx, tx, expirationTx); err != nil {
+			return apperror.Internal("failed to record salak_expiration transaction", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return transaction.SettlementReceipt{}, err
+	}
+	return receipt, nil
+}

@@ -41,6 +41,18 @@ type Config struct {
 	JWTSecret     string
 	JWTExpiryMins int
 	SeedDemoData  bool
+	// AdminJWTSecret signs admin tokens - deliberately its own env var, not
+	// JWTSecret, so the two are never accidentally the same value (see
+	// internal/platform/jwtutil/admin.go's AdminSigner doc comment for why
+	// that separation matters).
+	AdminJWTSecret string
+	// AdminUsername/AdminPassword are used only by cmd/seed to create or
+	// rotate the seeded admin credential. Empty outside local means
+	// cmd/seed skips admin creation with a warning, rather than falling
+	// back to a guessable default - an admin credential is more sensitive
+	// than the JWT secret.
+	AdminUsername string
+	AdminPassword string
 	// KapookCountdownDuration is how long a goal's auto-purchase countdown
 	// runs once its target is reached, defaulting to the real 24h. This is
 	// a config knob, not a code constant, specifically so a demo/test run
@@ -72,6 +84,9 @@ func Load() Config {
 		JWTSecret:                          getEnv("JWT_SECRET", ""),
 		JWTExpiryMins:                      getEnvInt("JWT_EXPIRY_MINUTES", 60),
 		SeedDemoData:                       getEnvBool("SEED_DEMO_DATA", false),
+		AdminJWTSecret:                     getEnv("ADMIN_JWT_SECRET", ""),
+		AdminUsername:                      getEnv("ADMIN_USERNAME", ""),
+		AdminPassword:                      getEnv("ADMIN_PASSWORD", ""),
 		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
 		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", decimal.Zero),
 	}
@@ -83,6 +98,13 @@ func Load() Config {
 	}
 	if cfg.JWTSecret == "" {
 		cfg.JWTSecret = "local-dev-insecure-secret"
+	}
+
+	if cfg.AppEnv != "local" && cfg.AdminJWTSecret == "" {
+		log.Fatal("ADMIN_JWT_SECRET must be set outside of local environment")
+	}
+	if cfg.AdminJWTSecret == "" {
+		cfg.AdminJWTSecret = "local-dev-insecure-admin-secret"
 	}
 
 	return cfg
