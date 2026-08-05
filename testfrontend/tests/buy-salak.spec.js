@@ -35,14 +35,14 @@ test.describe("buy salak", () => {
     await expect(page.getByTestId("custom-amount-input")).toHaveAttribute("step", "1000");
     await expect(page.getByTestId("amount-hint")).toHaveText(/multiple of 1000 THB/i);
 
-    await fillBuyForm(page, { amount: 30000, productLabel: "Digital Salak 1-Year" });
+    await fillBuyForm(page, { amount: 30000, productLabel: "สลากดิจิทัล 1 ปี" });
     await shoot(page, "form-filled");
 
     await page.getByTestId("buy-submit").click();
 
     const receipt = page.getByTestId("receipt");
     await expect(receipt).toBeVisible();
-    await expect(page.getByTestId("receipt-product-name")).toHaveText("Digital Salak 1-Year");
+    await expect(page.getByTestId("receipt-product-name")).toHaveText("สลากดิจิทัล 1 ปี");
     await expect(page.getByTestId("receipt-units")).toHaveText("300");
     await expect(page.getByTestId("receipt-funding-balance")).toHaveText(String(fundingBefore - 30000));
     await expect(page.getByTestId("receipt-salak-balance")).toHaveText(String(salakBefore + 30000));
@@ -67,7 +67,7 @@ test.describe("buy salak", () => {
     expect(await readBalance(page, SALAK_ACCOUNT_NUMBER)).toBe(salakBefore + 30000);
 
     await expect(page.getByTestId("holding-row")).toHaveCount(holdingsBefore + 1);
-    const newHolding = page.getByTestId("holding-row").filter({ hasText: "Digital Salak 1-Year" }).last();
+    const newHolding = page.getByTestId("holding-row").filter({ hasText: "สลากดิจิทัล 1 ปี" }).last();
     await expect(newHolding.getByTestId("holding-units")).toHaveText("300");
     await expect(newHolding.getByTestId("holding-ticket-range")).toHaveText(`${ticketStartText} - ${ticketEndText}`);
     await shoot(page, "accounts-updated");
@@ -98,7 +98,7 @@ test.describe("buy salak", () => {
 
     await page.getByTestId("funding-account-select").selectOption(SAVINGS_ACCOUNT_ID);
     await page.getByTestId("salak-account-select").selectOption(SALAK_ACCOUNT_ID);
-    await page.getByTestId("product-select").selectOption({ label: "Digital Salak 1-Year" });
+    await page.getByTestId("product-select").selectOption({ label: "สลากดิจิทัล 1 ปี" });
     await page.getByTestId("amount-select").selectOption("10000");
     await shoot(page, "form-filled");
 
@@ -121,7 +121,7 @@ test.describe("buy salak", () => {
     await loginAsDemo(page);
     const fundingBefore = await readBalance(page, SAVINGS_ACCOUNT_NUMBER);
 
-    await fillBuyForm(page, { amount: 1500, productLabel: "Digital Salak 1-Year" });
+    await fillBuyForm(page, { amount: 1500, productLabel: "สลากดิจิทัล 1 ปี" });
     await shoot(page, "form-filled");
 
     await page.getByTestId("buy-submit").click();
@@ -140,7 +140,7 @@ test.describe("buy salak", () => {
     await loginAsDemo(page);
     const fundingBefore = await readBalance(page, SAVINGS_ACCOUNT_NUMBER);
 
-    await fillBuyForm(page, { amount: 20_000_000, productLabel: "Digital Salak 1-Year" });
+    await fillBuyForm(page, { amount: 20_000_000, productLabel: "สลากดิจิทัล 1 ปี" });
     await shoot(page, "form-filled");
 
     await page.getByTestId("buy-submit").click();
@@ -159,7 +159,7 @@ test.describe("buy salak", () => {
     const fundingBefore = await readBalance(page, SAVINGS_ACCOUNT_NUMBER);
     const tooMuch = fundingBefore + 1000; // still a multiple of 1000, still under max, but more than available
 
-    await fillBuyForm(page, { amount: tooMuch, productLabel: "Digital Salak 1-Year" });
+    await fillBuyForm(page, { amount: tooMuch, productLabel: "สลากดิจิทัล 1 ปี" });
     await shoot(page, "form-filled");
 
     await page.getByTestId("buy-submit").click();

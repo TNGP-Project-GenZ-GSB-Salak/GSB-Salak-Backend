@@ -383,7 +383,7 @@ func (s *KapookService) Deposit(ctx context.Context, userID, kapookAccountID, sa
 			CreditAccountID:    kapookAccountID,
 			CreditAmount:       amount,
 			CreditBalanceAfter: kapookBalanceAfter,
-			Description:        "Kapook deposit",
+			Description:        "ฝากเงินเข้ากระปุกออมสลาก",
 			Now:                now,
 		}); err != nil {
 			return err
@@ -549,9 +549,9 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID uu
 			txType = domain.TransactionWithdrawWithFee
 		}
 
-		description := "Kapook withdrawal"
+		description := "ถอนเงินจากกระปุกออมสลาก"
 		if feeCharged {
-			description = "Kapook withdrawal (2% fee)"
+			description = "ถอนเงินจากกระปุกออมสลาก (หักค่าธรรมเนียม 2%)"
 		}
 		if err := s.recordKapookLedgerPair(ctx, tx, kapookLedgerPairInput{
 			Type:               txType,

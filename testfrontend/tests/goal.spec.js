@@ -25,7 +25,7 @@ test.describe("kapook goal", () => {
     await expect(page.getByTestId("goal-view")).toBeHidden();
     await shoot(page, "no-goal-yet");
 
-    await page.getByTestId("product-select").selectOption({ label: "Digital Salak 1-Year" });
+    await page.getByTestId("product-select").selectOption({ label: "สลากดิจิทัล 1 ปี" });
     await page.getByTestId("goal-amount-input").fill("5000");
     await shoot(page, "form-filled");
 

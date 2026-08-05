@@ -29,7 +29,7 @@ test.describe("draw-day purchase guard", () => {
       await loginAsDemo(page);
       await page.getByTestId("funding-account-select").selectOption(SAVINGS_ACCOUNT_ID);
       await page.getByTestId("salak-account-select").selectOption(SALAK_ACCOUNT_ID);
-      await page.getByTestId("product-select").selectOption({ label: "Digital Salak 2-Year" });
+      await page.getByTestId("product-select").selectOption({ label: "สลากดิจิทัล 2 ปี" });
       await page.getByTestId("amount-select").selectOption("1000");
       await shoot(page, "form-filled");
 

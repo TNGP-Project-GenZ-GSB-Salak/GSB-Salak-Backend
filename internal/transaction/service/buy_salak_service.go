@@ -147,7 +147,7 @@ func (s *BuySalakService) mintAndSettle(ctx context.Context, tx *gorm.DB, fundin
 
 	refID := uuid.New()
 	now := s.clock.Now()
-	description := fmt.Sprintf("Buy %s", product.Name)
+	description := fmt.Sprintf("ซื้อ%s", product.Name)
 
 	debitEntry := &txdomain.LedgerEntry{
 		ID:            uuid.New(),

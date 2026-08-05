@@ -45,7 +45,7 @@ test.describe("kapook countdown auto-purchase", () => {
 
     // The smallest valid target for SALAK_1Y (min purchase = step = 1000),
     // so a single deposit reaches it immediately.
-    await page.getByTestId("product-select").selectOption({ label: "Digital Salak 1-Year" });
+    await page.getByTestId("product-select").selectOption({ label: "สลากดิจิทัล 1 ปี" });
     await page.getByTestId("goal-amount-input").fill("1000");
     await page.getByTestId("create-goal-submit").click();
     await expect(page.getByTestId("goal-view")).toBeVisible();

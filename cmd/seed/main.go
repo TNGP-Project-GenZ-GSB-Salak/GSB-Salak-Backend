@@ -56,7 +56,7 @@ func main() {
 		{
 			ID:                      uuid.New(),
 			Code:                    "SALAK_1Y",
-			Name:                    "Digital Salak 1-Year",
+			Name:                    "สลากดิจิทัล 1 ปี",
 			TermMonths:              12,
 			UnitPrice:               decimal.NewFromInt(100),
 			MinPurchase:             decimal.NewFromInt(1000),
@@ -68,7 +68,7 @@ func main() {
 		{
 			ID:                      uuid.New(),
 			Code:                    "SALAK_2Y",
-			Name:                    "Digital Salak 2-Year",
+			Name:                    "สลากดิจิทัล 2 ปี",
 			TermMonths:              24,
 			UnitPrice:               decimal.NewFromInt(100),
 			MinPurchase:             decimal.NewFromInt(1000),

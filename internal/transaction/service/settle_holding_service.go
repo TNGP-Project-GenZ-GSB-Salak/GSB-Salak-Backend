@@ -82,17 +82,17 @@ func (s *BuySalakService) SettleMaturedHoldingInTx(ctx context.Context, tx *gorm
 	principalDebit := &txdomain.LedgerEntry{
 		ID: uuid.New(), AccountID: holding.AccountID, HoldingID: &holding.ID,
 		Type: txdomain.EntryDebit, Amount: holding.PurchaseAmount, BalanceAfter: salakBalanceAfter,
-		ReferenceType: "salak_maturity", ReferenceID: refID, Description: "Salak maturity - principal", CreatedAt: now,
+		ReferenceType: "salak_maturity", ReferenceID: refID, Description: "สลากครบกำหนด - เงินต้น", CreatedAt: now,
 	}
 	principalCredit := &txdomain.LedgerEntry{
 		ID: uuid.New(), AccountID: primary.ID, HoldingID: &holding.ID,
 		Type: txdomain.EntryCredit, Amount: holding.PurchaseAmount, BalanceAfter: primaryBalanceAfterPrincipal,
-		ReferenceType: "salak_maturity", ReferenceID: refID, Description: "Salak maturity - principal", CreatedAt: now,
+		ReferenceType: "salak_maturity", ReferenceID: refID, Description: "สลากครบกำหนด - เงินต้น", CreatedAt: now,
 	}
 	interestCredit := &txdomain.LedgerEntry{
 		ID: uuid.New(), AccountID: primary.ID, HoldingID: &holding.ID,
 		Type: txdomain.EntryCredit, Amount: interest, BalanceAfter: primaryBalanceAfterInterest,
-		ReferenceType: "salak_maturity_interest", ReferenceID: refID, Description: "Salak maturity - interest", CreatedAt: now,
+		ReferenceType: "salak_maturity_interest", ReferenceID: refID, Description: "สลากครบกำหนด - ดอกเบี้ย", CreatedAt: now,
 	}
 	for _, entry := range []*txdomain.LedgerEntry{principalDebit, principalCredit, interestCredit} {
 		if err := s.ledgerRepo.Create(ctx, tx, entry); err != nil {
