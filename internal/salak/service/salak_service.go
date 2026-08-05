@@ -113,6 +113,28 @@ func (s *SalakService) EnsureNotDrawDay(ctx context.Context, product domain.Prod
 	return nil
 }
 
+// nextAvailableDateSearchLimit bounds how many days ahead NextAvailableDate
+// searches before giving up - draw days are roughly monthly per product
+// (see cmd/seed/draw_dates.go), so a real answer is always found within a
+// handful of days; this is a safety net against an exhausted or malformed
+// calendar, not a realistic path.
+const nextAvailableDateSearchLimit = 45
+
+func (s *SalakService) NextAvailableDate(ctx context.Context, product domain.Product) (time.Time, error) {
+	candidate := truncateToDate(s.clock.Now()).AddDate(0, 0, 1)
+	for i := 0; i < nextAvailableDateSearchLimit; i++ {
+		isDrawDay, err := s.drawDates.IsDrawDay(ctx, product.ID, candidate)
+		if err != nil {
+			return time.Time{}, apperror.Internal("failed to check draw-day calendar", err)
+		}
+		if !isDrawDay {
+			return candidate, nil
+		}
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	return time.Time{}, apperror.Internal("no available purchase date found within search window", nil)
+}
+
 func (s *SalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (domain.Holding, error) {
 	product, err := s.products.FindByID(ctx, productID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

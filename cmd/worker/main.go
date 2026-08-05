@@ -54,7 +54,7 @@ func main() {
 	buySalakService := transactionsvc.NewBuySalakService(gdb, accountService, salakService, ledgerRepository, badgeService, clk)
 	kapookService := kapooksvc.NewKapookService(termsRepository, goalRepository, salakService, accountService, gdb, ledgerRepository, kapookTransactionRepository, clk, buySalakService, cfg.KapookCountdownDuration)
 
-	w := worker.New(gdb, goalRepository, accountService, kapookService, clk, cfg.KapookCountdownDuration)
+	w := worker.New(gdb, goalRepository, accountService, kapookService, salakService, clk, cfg.KapookCountdownDuration)
 
 	log.Printf("kapook worker starting: countdown=%s, tick=%s", cfg.KapookCountdownDuration, tickInterval)
 

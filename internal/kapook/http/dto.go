@@ -33,7 +33,12 @@ type goalResponse struct {
 	SalakAmount   decimal.Decimal `json:"salak_amount"`
 	IsActive      bool            `json:"is_active"`
 	GoalReachedAt *time.Time      `json:"goal_reached_at,omitempty"`
-	CreatedAt     time.Time       `json:"created_at"`
+	// AutoPurchaseDeferredUntil is set only once the worker has actually hit
+	// a draw-day rejection for this goal - never present on the very first
+	// tick after the countdown expires, before anything knows which case
+	// this is.
+	AutoPurchaseDeferredUntil *time.Time `json:"auto_purchase_deferred_until,omitempty"`
+	CreatedAt                 time.Time  `json:"created_at"`
 	// The read model's six derived fields (kapook.GoalSnapshot) - see
 	// .scratch/mvp1-frontend-integration-build/issues/05-*.md. AvailableBalance
 	// is what a withdrawal or purchase can draw on - NOT SavingAmount, which
@@ -57,6 +62,7 @@ func toGoalResponse(snap kapook.GoalSnapshot) goalResponse {
 		SalakAmount:               g.SalakAmount,
 		IsActive:                  g.IsActive,
 		GoalReachedAt:             g.GoalReachedAt,
+		AutoPurchaseDeferredUntil: g.AutoPurchaseDeferredUntil,
 		CreatedAt:                 g.CreatedAt,
 		AvailableBalance:          snap.AvailableBalance,
 		TargetReached:             snap.TargetReached,

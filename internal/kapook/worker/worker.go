@@ -83,17 +83,19 @@ type Worker struct {
 	goals             kapook.GoalRepository
 	accounts          account.Service
 	kapookSvc         kapook.Service
+	salakSvc          salak.Service
 	clk               clock.Clock
 	countdownDuration time.Duration
 	claimBatchLimit   int
 }
 
-func New(db *gorm.DB, goals kapook.GoalRepository, accounts account.Service, kapookSvc kapook.Service, clk clock.Clock, countdownDuration time.Duration) *Worker {
+func New(db *gorm.DB, goals kapook.GoalRepository, accounts account.Service, kapookSvc kapook.Service, salakSvc salak.Service, clk clock.Clock, countdownDuration time.Duration) *Worker {
 	return &Worker{
 		db:                db,
 		goals:             goals,
 		accounts:          accounts,
 		kapookSvc:         kapookSvc,
+		salakSvc:          salakSvc,
 		clk:               clk,
 		countdownDuration: countdownDuration,
 		claimBatchLimit:   defaultClaimBatchLimit,
@@ -108,10 +110,12 @@ func New(db *gorm.DB, goals kapook.GoalRepository, accounts account.Service, kap
 // that goal's Outcome and the loop moves on.
 func (w *Worker) RunOnce(ctx context.Context) (Summary, error) {
 	var summary Summary
-	cutoff := w.clk.Now().Add(-w.countdownDuration)
+	now := w.clk.Now()
+	cutoff := now.Add(-w.countdownDuration)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
 	err := w.db.Transaction(func(tx *gorm.DB) error {
-		goals, err := w.goals.ClaimDueGoals(ctx, tx, cutoff, w.claimBatchLimit)
+		goals, err := w.goals.ClaimDueGoals(ctx, tx, cutoff, today, w.claimBatchLimit)
 		if err != nil {
 			return fmt.Errorf("claim due goals: %w", err)
 		}
@@ -162,14 +166,36 @@ func (w *Worker) processGoal(ctx context.Context, tx *gorm.DB, goal kapookdomain
 	amount := goal.AvailableBalance()
 	if _, err := w.kapookSvc.BuyFromGoalInTx(ctx, tx, kapookAcc.UserID, goal.AccountID, salakAccountID, amount); err != nil {
 		if errors.Is(err, salak.ErrDrawDay) {
-			out.Outcome = OutcomeDeferred
-			log.Printf("kapook worker: deferring goal %s (draw day): %v", goal.ID, err)
-			return out
+			return w.deferGoal(ctx, tx, out, goal)
 		}
 		return w.fail(out, err)
 	}
 
 	out.Outcome = OutcomePurchased
+	return out
+}
+
+// deferGoal persists goal's retry date - today's draw-day rejection made it
+// unactionable, but the client still needs to learn why and when, rather
+// than watching a "processing" state for the whole draw day. Computing the
+// product just to find that date, and persisting it, is itself allowed to
+// fail (an unreachable product, a DB error) - that's a real fault, not a
+// draw day, so it's recorded as OutcomeFailed and retried next tick like
+// any other failure, rather than silently left as "deferred" with no date.
+func (w *Worker) deferGoal(ctx context.Context, tx *gorm.DB, out GoalOutcome, goal kapookdomain.Goal) GoalOutcome {
+	product, err := w.salakSvc.GetProduct(ctx, goal.ProductID)
+	if err != nil {
+		return w.fail(out, fmt.Errorf("resolve product for draw-day deferral: %w", err))
+	}
+	until, err := w.salakSvc.NextAvailableDate(ctx, product)
+	if err != nil {
+		return w.fail(out, fmt.Errorf("compute next available date: %w", err))
+	}
+	if err := w.goals.SetAutoPurchaseDeferral(ctx, tx, goal.ID, until); err != nil {
+		return w.fail(out, fmt.Errorf("persist draw-day deferral: %w", err))
+	}
+	out.Outcome = OutcomeDeferred
+	log.Printf("kapook worker: deferring goal %s (draw day) until %s", goal.ID, until.Format("2006-01-02"))
 	return out
 }
 

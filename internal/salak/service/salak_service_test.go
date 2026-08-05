@@ -122,17 +122,26 @@ func (f *fakeHoldingRepo) ReserveTicketRange(ctx context.Context, tx *gorm.DB, u
 type fakeDrawDateRepo struct {
 	isDrawDay    bool
 	isDrawDayErr error
+	// drawDays, if non-nil, answers IsDrawDay per exact date instead of the
+	// single isDrawDay flag above - needed for NextAvailableDate's tests,
+	// which must tell two different candidate dates apart.
+	drawDays map[time.Time]bool
 
 	lastProductID uuid.UUID
 	lastDate      time.Time
+	callCount     int
 }
 
 func newFakeDrawDateRepo() *fakeDrawDateRepo { return &fakeDrawDateRepo{} }
 
 func (f *fakeDrawDateRepo) IsDrawDay(ctx context.Context, productID uuid.UUID, date time.Time) (bool, error) {
 	f.lastProductID, f.lastDate = productID, date
+	f.callCount++
 	if f.isDrawDayErr != nil {
 		return false, f.isDrawDayErr
+	}
+	if f.drawDays != nil {
+		return f.drawDays[date], nil
 	}
 	return f.isDrawDay, nil
 }
@@ -376,6 +385,43 @@ func TestSalakService_EnsureNotDrawDay(t *testing.T) {
 		err := svc.EnsureNotDrawDay(context.Background(), product)
 		assertAppErrKind(t, err, apperror.KindInternal)
 		assert.False(t, errors.Is(err, salak.ErrDrawDay))
+	})
+}
+
+// --- NextAvailableDate ---------------------------------------------------
+
+func TestSalakService_NextAvailableDate(t *testing.T) {
+	product := activeProduct()
+
+	t.Run("tomorrow, when it isn't itself a draw day", func(t *testing.T) {
+		drawDates := newFakeDrawDateRepo()
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{}, drawDates, testClock())
+
+		got, err := svc.NextAvailableDate(context.Background(), product)
+		require.NoError(t, err)
+		assert.True(t, time.Date(2026, 1, 16, 0, 0, 0, 0, time.UTC).Equal(got), "the day after fixedNow's Jan 15")
+	})
+
+	t.Run("skips forward past a run of consecutive draw days", func(t *testing.T) {
+		drawDates := newFakeDrawDateRepo()
+		drawDates.drawDays = map[time.Time]bool{
+			time.Date(2026, 1, 16, 0, 0, 0, 0, time.UTC): true,
+			time.Date(2026, 1, 17, 0, 0, 0, 0, time.UTC): true,
+		}
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{}, drawDates, testClock())
+
+		got, err := svc.NextAvailableDate(context.Background(), product)
+		require.NoError(t, err)
+		assert.True(t, time.Date(2026, 1, 18, 0, 0, 0, 0, time.UTC).Equal(got))
+	})
+
+	t.Run("repo error returns internal error", func(t *testing.T) {
+		drawDates := newFakeDrawDateRepo()
+		drawDates.isDrawDayErr = errors.New("db down")
+		svc := service.NewSalakService(newFakeProductRepo(), newFakeHoldingRepo(), &fakeAccountService{}, drawDates, testClock())
+
+		_, err := svc.NextAvailableDate(context.Background(), product)
+		assertAppErrKind(t, err, apperror.KindInternal)
 	})
 }
 

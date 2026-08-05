@@ -51,7 +51,7 @@ func newWorkerOn(db *gorm.DB, countdownDuration time.Duration) *worker.Worker {
 	goalRepo := kapookrepo.NewGormGoalRepository(db)
 	transactionRepo := kapookrepo.NewGormTransactionRepository(db)
 	kapookSvc := kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, db, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc, countdownDuration)
-	return worker.New(db, goalRepo, accountSvc, kapookSvc, clock.Real{}, countdownDuration)
+	return worker.New(db, goalRepo, accountSvc, kapookSvc, salakSvc, clock.Real{}, countdownDuration)
 }
 
 func TestKapookWorker_RunOnce_HappyPath_BuysTheFullAvailableBalance(t *testing.T) {
@@ -257,4 +257,53 @@ func TestKapookWorker_RunOnce_ShortenedCountdown_CompletesUnattendedAndMarksAuto
 	require.NotNil(t, purchase, "the worker must have recorded the purchase")
 	require.NotNil(t, purchase.IsAutomaticPurchase)
 	assert.True(t, *purchase.IsAutomaticPurchase, "the worker's own purchase must be marked automatic")
+}
+
+// TestKapookWorker_RunOnce_DrawDay_DefersAndPersistsRetryDate is the
+// ticket's required "make today a draw day" proof - one insert, exactly as
+// the guard itself checks, makes an otherwise-due goal hit the real
+// EnsureNotDrawDay rejection through the real BuyFromGoalInTx path (not a
+// fake error), and asserts the worker persists a real retry date (skipping
+// a second, consecutive draw day too) rather than leaving the goal
+// silently stuck. A second pass before that date arrives proves
+// ClaimDueGoals actually skips it, not just that the first pass deferred.
+func TestKapookWorker_RunOnce_DrawDay_DefersAndPersistsRetryDate(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+	user := mustCreateUser(t, tx, "")
+	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.RequireFromString("5000"))
+	mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	today := time.Now().UTC()
+	todayDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	mustCreateDrawDate(t, tx, product.ID, todayDate)
+	// Tomorrow is also a draw day, to prove the search skips past a run of
+	// consecutive draw days rather than just checking the day right after today.
+	mustCreateDrawDate(t, tx, product.ID, todayDate.AddDate(0, 0, 1))
+
+	reachedAt := time.Now().UTC().Add(-48 * time.Hour)
+	goal := &kapookdomain.Goal{
+		ID: uuid.New(), AccountID: kapookAcc.ID, ProductID: product.ID,
+		GoalAmount: decimal.RequireFromString("5000"), SavingAmount: decimal.RequireFromString("5000"),
+		IsActive: true, GoalReachedAt: &reachedAt,
+	}
+	require.NoError(t, tx.Create(goal).Error)
+
+	w := newWorkerOn(tx, 24*time.Hour)
+	summary, err := w.RunOnce(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Claimed)
+	require.Len(t, summary.Results, 1)
+	assert.Equal(t, worker.OutcomeDeferred, summary.Results[0].Outcome)
+
+	var gotGoal kapookdomain.Goal
+	require.NoError(t, tx.Where("id = ?", goal.ID).First(&gotGoal).Error)
+	require.NotNil(t, gotGoal.AutoPurchaseDeferredUntil, "the worker must persist the deferral, not just log and move on")
+	assert.True(t, todayDate.AddDate(0, 0, 2).Equal(*gotGoal.AutoPurchaseDeferredUntil), "must skip both today's and tomorrow's draw days")
+	assert.True(t, gotGoal.IsActive, "a deferral must never close the goal")
+
+	summary2, err := w.RunOnce(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, summary2.Claimed, "ClaimDueGoals must skip a goal whose deferred-until date is still in the future")
 }

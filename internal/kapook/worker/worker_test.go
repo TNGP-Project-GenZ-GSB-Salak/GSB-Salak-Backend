@@ -14,6 +14,7 @@ import (
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/salak"
+	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
@@ -29,6 +30,14 @@ import (
 type fakeGoalRepo struct {
 	claimResult []kapookdomain.Goal
 	claimErr    error
+
+	setDeferralErr error
+	deferralCalls  []deferralCall
+}
+
+type deferralCall struct {
+	GoalID uuid.UUID
+	Until  time.Time
 }
 
 func (f *fakeGoalRepo) Create(ctx context.Context, g *kapookdomain.Goal) error { return nil }
@@ -53,11 +62,15 @@ func (f *fakeGoalRepo) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, g
 func (f *fakeGoalRepo) MarkGoalReached(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, reachedAt time.Time) error {
 	return nil
 }
-func (f *fakeGoalRepo) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]kapookdomain.Goal, error) {
+func (f *fakeGoalRepo) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff, today time.Time, limit int) ([]kapookdomain.Goal, error) {
 	if f.claimErr != nil {
 		return nil, f.claimErr
 	}
 	return f.claimResult, nil
+}
+func (f *fakeGoalRepo) SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error {
+	f.deferralCalls = append(f.deferralCalls, deferralCall{GoalID: goalID, Until: until})
+	return f.setDeferralErr
 }
 
 // fakeAccountService implements account.Service; the worker only calls
@@ -158,6 +171,42 @@ func (f *fakeKapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, us
 	return f.buyResult, nil
 }
 
+// fakeSalakService implements salak.Service; the worker only calls
+// GetProduct and NextAvailableDate, both only when deferring a draw-day
+// rejection.
+type fakeSalakService struct {
+	getProductResult salakdomain.Product
+	getProductErr    error
+
+	nextAvailableDateResult time.Time
+	nextAvailableDateErr    error
+}
+
+func (f *fakeSalakService) ListProducts(ctx context.Context) ([]salakdomain.Product, error) {
+	return nil, nil
+}
+func (f *fakeSalakService) GetProduct(ctx context.Context, productID uuid.UUID) (salakdomain.Product, error) {
+	if f.getProductErr != nil {
+		return salakdomain.Product{}, f.getProductErr
+	}
+	return f.getProductResult, nil
+}
+func (f *fakeSalakService) ValidatePurchase(product salakdomain.Product, amount decimal.Decimal) error {
+	return nil
+}
+func (f *fakeSalakService) EnsureNotDrawDay(ctx context.Context, product salakdomain.Product) error {
+	return nil
+}
+func (f *fakeSalakService) NextAvailableDate(ctx context.Context, product salakdomain.Product) (time.Time, error) {
+	return f.nextAvailableDateResult, f.nextAvailableDateErr
+}
+func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (salakdomain.Holding, error) {
+	return salakdomain.Holding{}, nil
+}
+func (f *fakeSalakService) ListHoldingsByAccount(ctx context.Context, userID, accountID uuid.UUID) ([]salakdomain.Holding, error) {
+	return nil, nil
+}
+
 // --- helpers -------------------------------------------------------------
 
 func kapookAccount(id, userID uuid.UUID) accountdomain.Account {
@@ -213,7 +262,7 @@ func TestWorker_RunOnce(t *testing.T) {
 	t.Run("no due goals: an empty summary, no purchase attempted", func(t *testing.T) {
 		goals := &fakeGoalRepo{}
 		kapookSvc := &fakeKapookService{}
-		w := worker.New(newCommittingDB(t), goals, newFakeAccountService(), kapookSvc, clock.Real{}, 24*time.Hour)
+		w := worker.New(newCommittingDB(t), goals, newFakeAccountService(), kapookSvc, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
@@ -239,7 +288,7 @@ func TestWorker_RunOnce(t *testing.T) {
 		}
 		kapookSvc := &fakeKapookService{buyResult: kapook.BuyFromGoalResult{GoalCompleted: true}}
 
-		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, clock.Real{}, 24*time.Hour)
+		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
@@ -256,7 +305,37 @@ func TestWorker_RunOnce(t *testing.T) {
 		assert.True(t, decimal.RequireFromString("4000").Equal(call.Amount), "must buy the remaining available balance, not the full goal amount")
 	})
 
-	t.Run("a draw-day rejection is deferred, not counted as a failure", func(t *testing.T) {
+	t.Run("a draw-day rejection is deferred and the retry date persisted, not counted as a failure", func(t *testing.T) {
+		userID, kapookAccID, salakAccID := uuid.New(), uuid.New(), uuid.New()
+		goalID := uuid.New()
+		goal := reachedGoal(goalID, kapookAccID, time.Now().Add(-48*time.Hour), decimal.RequireFromString("5000"), decimal.Zero)
+		goal.ProductID = uuid.New()
+
+		goals := &fakeGoalRepo{claimResult: []kapookdomain.Goal{goal}}
+		accounts := newFakeAccountService()
+		accounts.byID[kapookAccID] = kapookAccount(kapookAccID, userID)
+		accounts.accountsByUser[userID] = []accountdomain.Account{salakAccount(salakAccID, userID)}
+		kapookSvc := &fakeKapookService{buyErr: apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day", salak.ErrDrawDay)}
+		nextAvailable := time.Date(2026, 1, 17, 0, 0, 0, 0, time.UTC)
+		salakSvc := &fakeSalakService{
+			getProductResult:        salakdomain.Product{ID: goal.ProductID},
+			nextAvailableDateResult: nextAvailable,
+		}
+
+		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, salakSvc, clock.Real{}, 24*time.Hour)
+
+		summary, err := w.RunOnce(context.Background())
+		require.NoError(t, err)
+		require.Len(t, summary.Results, 1)
+		assert.Equal(t, worker.OutcomeDeferred, summary.Results[0].Outcome)
+		assert.Equal(t, 0, summary.Failed())
+
+		require.Len(t, goals.deferralCalls, 1)
+		assert.Equal(t, goalID, goals.deferralCalls[0].GoalID)
+		assert.True(t, nextAvailable.Equal(goals.deferralCalls[0].Until))
+	})
+
+	t.Run("re-deferring an already-deferred goal on a later tick is harmless, not an error", func(t *testing.T) {
 		userID, kapookAccID, salakAccID := uuid.New(), uuid.New(), uuid.New()
 		goal := reachedGoal(uuid.New(), kapookAccID, time.Now().Add(-48*time.Hour), decimal.RequireFromString("5000"), decimal.Zero)
 
@@ -265,14 +344,43 @@ func TestWorker_RunOnce(t *testing.T) {
 		accounts.byID[kapookAccID] = kapookAccount(kapookAccID, userID)
 		accounts.accountsByUser[userID] = []accountdomain.Account{salakAccount(salakAccID, userID)}
 		kapookSvc := &fakeKapookService{buyErr: apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day", salak.ErrDrawDay)}
+		salakSvc := &fakeSalakService{nextAvailableDateResult: time.Date(2026, 1, 17, 0, 0, 0, 0, time.UTC)}
 
-		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, clock.Real{}, 24*time.Hour)
+		db, mock := newSQLMockDB(t)
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+		mock.ExpectBegin()
+		mock.ExpectCommit()
+		w := worker.New(db, goals, accounts, kapookSvc, salakSvc, clock.Real{}, 24*time.Hour)
+
+		for i := 0; i < 2; i++ {
+			summary, err := w.RunOnce(context.Background())
+			require.NoError(t, err)
+			require.Len(t, summary.Results, 1)
+			assert.Equal(t, worker.OutcomeDeferred, summary.Results[0].Outcome)
+		}
+		assert.Len(t, goals.deferralCalls, 2, "re-setting the same deferral on a repeated tick must not error or be skipped")
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("a failure to resolve the product while deferring is a real failure, not silently deferred", func(t *testing.T) {
+		userID, kapookAccID, salakAccID := uuid.New(), uuid.New(), uuid.New()
+		goal := reachedGoal(uuid.New(), kapookAccID, time.Now().Add(-48*time.Hour), decimal.RequireFromString("5000"), decimal.Zero)
+
+		goals := &fakeGoalRepo{claimResult: []kapookdomain.Goal{goal}}
+		accounts := newFakeAccountService()
+		accounts.byID[kapookAccID] = kapookAccount(kapookAccID, userID)
+		accounts.accountsByUser[userID] = []accountdomain.Account{salakAccount(salakAccID, userID)}
+		kapookSvc := &fakeKapookService{buyErr: apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day", salak.ErrDrawDay)}
+		salakSvc := &fakeSalakService{getProductErr: apperror.NotFound("salak product not found")}
+
+		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, salakSvc, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
 		require.Len(t, summary.Results, 1)
-		assert.Equal(t, worker.OutcomeDeferred, summary.Results[0].Outcome)
-		assert.Equal(t, 0, summary.Failed())
+		assert.Equal(t, worker.OutcomeFailed, summary.Results[0].Outcome)
+		assert.Empty(t, goals.deferralCalls)
 	})
 
 	t.Run("any other purchase error is recorded as a failure, with the error attached", func(t *testing.T) {
@@ -286,7 +394,7 @@ func TestWorker_RunOnce(t *testing.T) {
 		wantErr := apperror.Validation("salak product is not available for purchase")
 		kapookSvc := &fakeKapookService{buyErr: wantErr}
 
-		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, clock.Real{}, 24*time.Hour)
+		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
@@ -305,7 +413,7 @@ func TestWorker_RunOnce(t *testing.T) {
 		// accountsByUser[userID] deliberately has no salak account.
 		kapookSvc := &fakeKapookService{}
 
-		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, clock.Real{}, 24*time.Hour)
+		w := worker.New(newCommittingDB(t), goals, accounts, kapookSvc, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
@@ -323,7 +431,7 @@ func TestWorker_RunOnce(t *testing.T) {
 
 		goals := &fakeGoalRepo{claimResult: []kapookdomain.Goal{inactiveGoal, notReachedGoal}}
 		kapookSvc := &fakeKapookService{}
-		w := worker.New(newCommittingDB(t), goals, newFakeAccountService(), kapookSvc, clock.Real{}, 24*time.Hour)
+		w := worker.New(newCommittingDB(t), goals, newFakeAccountService(), kapookSvc, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		summary, err := w.RunOnce(context.Background())
 		require.NoError(t, err)
@@ -337,7 +445,7 @@ func TestWorker_RunOnce(t *testing.T) {
 		db, mock := newSQLMockDB(t)
 		mock.ExpectBegin()
 		mock.ExpectRollback()
-		w := worker.New(db, goals, newFakeAccountService(), &fakeKapookService{}, clock.Real{}, 24*time.Hour)
+		w := worker.New(db, goals, newFakeAccountService(), &fakeKapookService{}, &fakeSalakService{}, clock.Real{}, 24*time.Hour)
 
 		_, err := w.RunOnce(context.Background())
 		require.Error(t, err)

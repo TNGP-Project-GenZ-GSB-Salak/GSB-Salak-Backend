@@ -44,8 +44,11 @@ type GoalRepository interface {
 	UpdateSavingAmount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal) error
 	// UpdateAfterPurchase records a purchase's effect on the goal: SalakAmount
 	// grows to newSalakAmount (SavingAmount is untouched - see
-	// domain.Goal.AvailableBalance), and IsActive is set to stillActive
-	// (false only once a purchase fully satisfies GoalAmount).
+	// domain.Goal.AvailableBalance), IsActive is set to stillActive (false
+	// only once a purchase fully satisfies GoalAmount), and
+	// AutoPurchaseDeferredUntil is cleared unconditionally - a purchase
+	// succeeding, whether the customer's or a retried worker attempt, is
+	// exactly what a deferral was waiting on.
 	UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error
 	// UpdateAfterWithdrawal is Withdraw's write path: SavingAmount shrinks to
 	// newSavingAmount, and IsActive is set to stillActive - false only for
@@ -61,8 +64,16 @@ type GoalRepository interface {
 	// concurrent worker passes (different ticks overlapping, or multiple
 	// replicas) each claim a disjoint subset instead of blocking on each
 	// other. Requires a real tx; every claimed row stays locked until the
-	// caller's transaction ends.
-	ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]domain.Goal, error)
+	// caller's transaction ends. A goal with AutoPurchaseDeferredUntil still
+	// in today's future (relative to today) is skipped entirely - re-
+	// claiming it before its recorded retry date would just re-hit the same
+	// draw-day rejection every tick.
+	ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff, today time.Time, limit int) ([]domain.Goal, error)
+	// SetAutoPurchaseDeferral persists until as goalID's
+	// AutoPurchaseDeferredUntil - the worker's response to a draw-day
+	// rejection. Re-setting the same date on a later tick (the goal is
+	// still due, still blocked) is a harmless no-op update, not an error.
+	SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error
 }
 
 // TransactionRepository owns the kapook_transactions ledger of movements

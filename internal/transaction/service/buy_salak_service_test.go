@@ -109,6 +109,9 @@ type fakeSalakService struct {
 
 	ensureNotDrawDayErr error
 
+	nextAvailableDateResult time.Time
+	nextAvailableDateErr    error
+
 	mintHoldingResult salakdomain.Holding
 	mintHoldingErr    error
 }
@@ -130,6 +133,10 @@ func (f *fakeSalakService) ValidatePurchase(product salakdomain.Product, amount 
 
 func (f *fakeSalakService) EnsureNotDrawDay(ctx context.Context, product salakdomain.Product) error {
 	return f.ensureNotDrawDayErr
+}
+
+func (f *fakeSalakService) NextAvailableDate(ctx context.Context, product salakdomain.Product) (time.Time, error) {
+	return f.nextAvailableDateResult, f.nextAvailableDateErr
 }
 
 func (f *fakeSalakService) MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (salakdomain.Holding, error) {

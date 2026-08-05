@@ -74,8 +74,12 @@ type fakeGoalRepo struct {
 	markGoalReachedErr       error
 	claimDueGoalsResult      []kapookdomain.Goal
 	claimDueGoalsErr         error
+	setDeferralErr           error
 
 	lastCreated                 *kapookdomain.Goal
+	lastDeferralGoalID          uuid.UUID
+	lastDeferralUntil           time.Time
+	setDeferralCalls            int
 	lastUpdatedGoalID           uuid.UUID
 	lastNewSaving               decimal.Decimal
 	lastNewSalakAmount          decimal.Decimal
@@ -198,11 +202,18 @@ func (f *fakeGoalRepo) MarkGoalReached(ctx context.Context, tx *gorm.DB, goalID 
 	return nil
 }
 
-func (f *fakeGoalRepo) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]kapookdomain.Goal, error) {
+func (f *fakeGoalRepo) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff, today time.Time, limit int) ([]kapookdomain.Goal, error) {
 	if f.claimDueGoalsErr != nil {
 		return nil, f.claimDueGoalsErr
 	}
 	return f.claimDueGoalsResult, nil
+}
+
+func (f *fakeGoalRepo) SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error {
+	f.lastDeferralGoalID = goalID
+	f.lastDeferralUntil = until
+	f.setDeferralCalls++
+	return f.setDeferralErr
 }
 
 // fakeAccountService is a hand-rolled implementation of account.Service.
@@ -303,6 +314,9 @@ type fakeSalakService struct {
 
 	validatePurchaseErr error
 	ensureNotDrawDayErr error
+
+	nextAvailableDateResult time.Time
+	nextAvailableDateErr    error
 }
 
 func (f *fakeSalakService) ListProducts(ctx context.Context) ([]salakdomain.Product, error) {
@@ -318,6 +332,10 @@ func (f *fakeSalakService) GetProduct(ctx context.Context, productID uuid.UUID) 
 
 func (f *fakeSalakService) ValidatePurchase(product salakdomain.Product, amount decimal.Decimal) error {
 	return f.validatePurchaseErr
+}
+
+func (f *fakeSalakService) NextAvailableDate(ctx context.Context, product salakdomain.Product) (time.Time, error) {
+	return f.nextAvailableDateResult, f.nextAvailableDateErr
 }
 
 func (f *fakeSalakService) EnsureNotDrawDay(ctx context.Context, product salakdomain.Product) error {

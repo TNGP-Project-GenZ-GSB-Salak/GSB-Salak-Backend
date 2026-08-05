@@ -66,7 +66,11 @@ func (r *GormGoalRepository) UpdateAfterPurchase(ctx context.Context, tx *gorm.D
 	return tx.WithContext(ctx).
 		Model(&domain.Goal{}).
 		Where("id = ?", goalID).
-		Updates(map[string]interface{}{"salak_amount": newSalakAmount, "is_active": stillActive}).Error
+		Updates(map[string]interface{}{
+			"salak_amount":                 newSalakAmount,
+			"is_active":                    stillActive,
+			"auto_purchase_deferred_until": nil,
+		}).Error
 }
 
 func (r *GormGoalRepository) UpdateAfterWithdrawal(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSavingAmount decimal.Decimal, stillActive bool) error {
@@ -83,11 +87,12 @@ func (r *GormGoalRepository) MarkGoalReached(ctx context.Context, tx *gorm.DB, g
 		Update("goal_reached_at", reachedAt).Error
 }
 
-func (r *GormGoalRepository) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff time.Time, limit int) ([]domain.Goal, error) {
+func (r *GormGoalRepository) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff, today time.Time, limit int) ([]domain.Goal, error) {
 	var goals []domain.Goal
 	err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 		Where("is_active AND goal_reached_at IS NOT NULL AND goal_reached_at <= ?", cutoff).
+		Where("auto_purchase_deferred_until IS NULL OR auto_purchase_deferred_until <= ?", today).
 		Order("goal_reached_at ASC").
 		Limit(limit).
 		Find(&goals).Error
@@ -95,4 +100,11 @@ func (r *GormGoalRepository) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cut
 		return nil, err
 	}
 	return goals, nil
+}
+
+func (r *GormGoalRepository) SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Update("auto_purchase_deferred_until", until).Error
 }

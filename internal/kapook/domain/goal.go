@@ -24,8 +24,14 @@ type Goal struct {
 	SalakAmount   decimal.Decimal
 	IsActive      bool
 	GoalReachedAt *time.Time
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// AutoPurchaseDeferredUntil is set by the worker when a draw-day guard
+	// blocks an otherwise-due auto-purchase, carrying the date it will
+	// actually retry - nil until then, and cleared the moment a purchase
+	// succeeds (UpdateAfterPurchase). Not a sixth transaction type; a plain
+	// nullable column on the goal itself.
+	AutoPurchaseDeferredUntil *time.Time
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 func (Goal) TableName() string {

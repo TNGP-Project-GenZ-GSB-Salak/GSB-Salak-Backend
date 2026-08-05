@@ -61,6 +61,11 @@ type Service interface {
 	// validation, covering the public endpoint, Kapook and the worker from
 	// one site.
 	EnsureNotDrawDay(ctx context.Context, product domain.Product) error
+	// NextAvailableDate finds the earliest date strictly after today that
+	// isn't product's draw day - what a caller blocked by EnsureNotDrawDay
+	// (the Kapook worker, to persist a deferred goal's retry date) uses to
+	// tell the customer when the purchase will actually happen.
+	NextAvailableDate(ctx context.Context, product domain.Product) (time.Time, error)
 	MintHolding(ctx context.Context, tx *gorm.DB, accountID, productID uuid.UUID, amount decimal.Decimal) (domain.Holding, error)
 	// ListHoldingsByAccount verifies userID owns accountID (via account.Service)
 	// before returning that account's holdings.
