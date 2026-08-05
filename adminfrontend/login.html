@@ -1,28 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <title>Log in - GSB Salak Admin</title>
+  <title>เข้าสู่ระบบ - แอดมิน สลากดิจิทัล GSB</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <h1>Admin log in</h1>
+    <h1>เข้าสู่ระบบแอดมิน</h1>
     <nav>
-      <a href="index.html">Home</a>
+      <a href="index.html">หน้าหลัก</a>
     </nav>
   </header>
 
   <form id="login-form" data-testid="login-form">
     <label>
-      Username
+      ชื่อผู้ใช้
       <input name="username" data-testid="username-input" required />
     </label>
     <label>
-      Password
+      รหัสผ่าน
       <input name="password" type="password" data-testid="password-input" required />
     </label>
-    <button type="submit" data-testid="submit-button">Log in</button>
+    <button type="submit" data-testid="submit-button">เข้าสู่ระบบ</button>
   </form>
 
   <p id="message" class="hidden" data-testid="message"></p>
@@ -48,7 +48,11 @@
         setAdminToken(data.token);
         window.location.href = "dashboard.html";
       } catch (err) {
-        showError(message, err);
+        // 401 here always means a rejected credential, not an expired
+        // session (there's no session yet) - the generic MESSAGE_BY_STATUS
+        // copy for 401 talks about re-logging in, which reads oddly on the
+        // login page itself, so this one status gets its own copy.
+        showMessage(message, err.status === 401 ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : messageForError(err));
       }
     });
   </script>

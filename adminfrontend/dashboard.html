@@ -1,47 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="th">
 <head>
   <meta charset="UTF-8" />
-  <title>Dashboard - GSB Salak Admin</title>
+  <title>แดชบอร์ด - แอดมิน สลากดิจิทัล GSB</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <h1>GSB Salak Admin</h1>
-    <button id="logout-button" data-testid="logout-button">Log out</button>
+    <h1>แอดมิน สลากดิจิทัล GSB</h1>
+    <button id="logout-button" data-testid="logout-button">ออกจากระบบ</button>
   </header>
 
   <!-- One <section> per concern - this is the only panel today, but a
        future observability dashboard adds more sections here, not a
        restructure of this one. -->
   <section>
-    <h2>Salak Actions</h2>
+    <h2>การดำเนินการสลาก</h2>
     <p>
-      Force-settles a Salak holding immediately - pays out principal + interest
-      to the owning customer's primary account, regardless of its real
-      maturity date. Demo/ops action only; a real production trigger would be
-      time-driven instead.
+      บังคับให้สลากครบกำหนดทันที - โอนเงินต้นพร้อมดอกเบี้ยเข้าบัญชีคู่โอนหลักของลูกค้า
+      โดยไม่คำนึงถึงวันครบกำหนดจริง ใช้สำหรับการสาธิต/ปฏิบัติการเท่านั้น
+      ระบบที่ใช้งานจริงในอนาคตจะทำงานโดยอัตโนมัติตามเวลา
     </p>
 
     <form id="settle-form" data-testid="settle-form">
       <label>
-        Holding ID
+        รหัสสลาก (Holding ID)
         <input name="holdingId" data-testid="holding-id-input" required />
       </label>
-      <button type="submit" data-testid="settle-submit-button">Force Settle Holding</button>
+      <button type="submit" data-testid="settle-submit-button">บังคับครบกำหนดสลาก</button>
     </form>
 
     <p id="settle-message" class="hidden" data-testid="settle-message"></p>
 
     <table id="settle-result" class="hidden" data-testid="settle-result">
       <tbody>
-        <tr><th>Holding ID</th><td data-field="holding_id"></td></tr>
-        <tr><th>Principal</th><td data-field="principal"></td></tr>
-        <tr><th>Interest</th><td data-field="interest"></td></tr>
-        <tr><th>Total</th><td data-field="total"></td></tr>
-        <tr><th>Primary account ID</th><td data-field="primary_account_id"></td></tr>
-        <tr><th>Primary balance after</th><td data-field="primary_balance_after"></td></tr>
-        <tr><th>Settled at</th><td data-field="settled_at"></td></tr>
+        <tr><th>รหัสสลาก (Holding ID)</th><td data-field="holding_id"></td></tr>
+        <tr><th>เงินต้น</th><td data-field="principal"></td></tr>
+        <tr><th>ดอกเบี้ย</th><td data-field="interest"></td></tr>
+        <tr><th>รวมทั้งสิ้น</th><td data-field="total"></td></tr>
+        <tr><th>รหัสบัญชีคู่โอนหลัก</th><td data-field="primary_account_id"></td></tr>
+        <tr><th>ยอดคงเหลือบัญชีคู่โอนหลังทำรายการ</th><td data-field="primary_balance_after"></td></tr>
+        <tr><th>เวลาที่ครบกำหนด</th><td data-field="settled_at"></td></tr>
       </tbody>
     </table>
   </section>
@@ -75,7 +74,7 @@
         }
         result.classList.remove("hidden");
       } catch (err) {
-        showError(message, err);
+        showMessage(message, messageForError(err));
       }
     });
   </script>
