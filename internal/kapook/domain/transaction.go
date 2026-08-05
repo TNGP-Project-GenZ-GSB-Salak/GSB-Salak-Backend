@@ -35,8 +35,12 @@ type Transaction struct {
 	GoalID           uuid.UUID
 	SavingsAccountID *uuid.UUID
 	HoldingID        *uuid.UUID
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// IsAutomaticPurchase is nil for every row except a buy_salak one the
+	// worker performed unattended - ticket 09's expand step, populated by
+	// ticket 10's worker; nothing sets it yet.
+	IsAutomaticPurchase *bool
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (Transaction) TableName() string {

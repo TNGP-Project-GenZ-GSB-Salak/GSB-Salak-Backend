@@ -35,6 +35,9 @@ func (f *fakeGoalRepo) Create(ctx context.Context, g *kapookdomain.Goal) error {
 func (f *fakeGoalRepo) FindActiveByAccountID(ctx context.Context, accountID uuid.UUID) (kapookdomain.Goal, error) {
 	return kapookdomain.Goal{}, gorm.ErrRecordNotFound
 }
+func (f *fakeGoalRepo) FindByID(ctx context.Context, goalID uuid.UUID) (kapookdomain.Goal, error) {
+	return kapookdomain.Goal{}, gorm.ErrRecordNotFound
+}
 func (f *fakeGoalRepo) FindActiveByAccountIDForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (kapookdomain.Goal, error) {
 	return kapookdomain.Goal{}, gorm.ErrRecordNotFound
 }
@@ -140,6 +143,9 @@ func (f *fakeKapookService) Withdraw(ctx context.Context, userID, kapookAccountI
 }
 func (f *fakeKapookService) GetWithdrawalStatus(ctx context.Context, userID, kapookAccountID uuid.UUID, amount *decimal.Decimal) (kapook.WithdrawalStatus, error) {
 	return kapook.WithdrawalStatus{}, nil
+}
+func (f *fakeKapookService) GetGoalHistory(ctx context.Context, userID, goalID uuid.UUID, limit, offset int) ([]kapook.HistoryEntry, error) {
+	return nil, nil
 }
 func (f *fakeKapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
 	return kapook.BuyFromGoalResult{}, nil

@@ -36,6 +36,17 @@ func (r *GormTransactionRepository) CountByGoalAndTypesInWindow(ctx context.Cont
 	return int(count), err
 }
 
+func (r *GormTransactionRepository) ListByGoal(ctx context.Context, goalID uuid.UUID, limit, offset int) ([]domain.Transaction, error) {
+	var txns []domain.Transaction
+	err := r.db.WithContext(ctx).
+		Where("goal_id = ?", goalID).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&txns).Error
+	return txns, err
+}
+
 func (r *GormTransactionRepository) SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (int64, int, error) {
 	if tx == nil {
 		tx = r.db

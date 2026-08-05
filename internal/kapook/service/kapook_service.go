@@ -638,6 +638,50 @@ func (s *KapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID
 	return result, nil
 }
 
+// GetGoalHistory looks up goalID directly (not scoped to a particular
+// account, since the caller doesn't necessarily know which kapook account a
+// given goal belongs to) and masks both "doesn't exist" and "isn't mine" as
+// the same apperror.NotFound, via the same kapookAccount ownership check
+// every other goal method uses. Fee/net are derived per row from Type and
+// Amount using computeWithdrawalFee - a withdraw_with_fee row costs exactly
+// what Withdraw itself would compute for that amount today; every other
+// type has no fee.
+func (s *KapookService) GetGoalHistory(ctx context.Context, userID, goalID uuid.UUID, limit, offset int) ([]kapook.HistoryEntry, error) {
+	goal, err := s.goals.FindByID(ctx, goalID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperror.NotFound("goal not found")
+	}
+	if err != nil {
+		return nil, apperror.Internal("failed to look up goal", err)
+	}
+
+	if _, err := s.kapookAccount(ctx, userID, goal.AccountID); err != nil {
+		return nil, err
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	txns, err := s.transactions.ListByGoal(ctx, goal.ID, limit, offset)
+	if err != nil {
+		return nil, apperror.Internal("failed to list goal history", err)
+	}
+
+	entries := make([]kapook.HistoryEntry, len(txns))
+	for i, t := range txns {
+		fee, net := computeWithdrawalFee(t.Amount, t.Type == domain.TransactionWithdrawWithFee)
+		entries[i] = kapook.HistoryEntry{Transaction: t, Fee: fee, Net: net}
+	}
+	return entries, nil
+}
+
 func (s *KapookService) validateBuyFromGoalAccounts(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) error {
 	if kapookAccountID == salakAccountID {
 		return apperror.Validation("kapook_account_id and salak_account_id must be different")

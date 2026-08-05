@@ -34,6 +34,15 @@ func (r *GormGoalRepository) FindActiveByAccountID(ctx context.Context, accountI
 	return g, nil
 }
 
+func (r *GormGoalRepository) FindByID(ctx context.Context, goalID uuid.UUID) (domain.Goal, error) {
+	var g domain.Goal
+	err := r.db.WithContext(ctx).First(&g, "id = ?", goalID).Error
+	if err != nil {
+		return domain.Goal{}, err
+	}
+	return g, nil
+}
+
 func (r *GormGoalRepository) FindActiveByAccountIDForUpdate(ctx context.Context, tx *gorm.DB, accountID uuid.UUID) (domain.Goal, error) {
 	var g domain.Goal
 	err := tx.WithContext(ctx).

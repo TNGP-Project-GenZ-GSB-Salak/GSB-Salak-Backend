@@ -28,6 +28,12 @@ type GoalRepository interface {
 	// FindActiveByAccountID returns gorm.ErrRecordNotFound if accountID has
 	// no active goal.
 	FindActiveByAccountID(ctx context.Context, accountID uuid.UUID) (domain.Goal, error)
+	// FindByID returns gorm.ErrRecordNotFound if goalID doesn't exist -
+	// active or not, unlike FindActiveByAccountID. Callers still need to
+	// check the returned goal's AccountID against the caller's own
+	// accounts to mask a foreign goal as not-found (see
+	// KapookService.GetGoalHistory).
+	FindByID(ctx context.Context, goalID uuid.UUID) (domain.Goal, error)
 	// FindActiveByAccountIDForUpdate is FindActiveByAccountID under
 	// SELECT ... FOR UPDATE, so a caller can read-then-write SavingAmount
 	// (e.g. a deposit) without losing a concurrent update. Requires a real
@@ -78,6 +84,11 @@ type TransactionRepository interface {
 	// nil for the ambient handle; pass the caller's own tx/savepoint when the
 	// purchase being counted was written earlier in the same transaction.
 	SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (units int64, count int, err error)
+	// ListByGoal returns goalID's transactions newest-first, limit/offset
+	// paginated the same way transaction.LedgerRepository.FindByAccountID
+	// is - a read-only, server-side scope by goal so a previous goal's rows
+	// on the same kapook account can never leak into this one's history.
+	ListByGoal(ctx context.Context, goalID uuid.UUID, limit, offset int) ([]domain.Transaction, error)
 }
 
 // WithdrawalStatus describes a goal's free-withdrawal allowance for the
@@ -161,6 +172,17 @@ type GoalSnapshot struct {
 	BuyEligible bool
 }
 
+// HistoryEntry is one row of a goal's history, with Fee/Net derived
+// server-side from Transaction's own Type and Amount - a display-only
+// projection, never persisted, so a future change to the withdrawal fee
+// rate can't retroactively misstate what a past transaction cost by
+// recomputing it at the new rate.
+type HistoryEntry struct {
+	Transaction domain.Transaction
+	Fee         decimal.Decimal
+	Net         decimal.Decimal
+}
+
 // Service is the public surface the http layer depends on.
 type Service interface {
 	Accept(ctx context.Context, userID uuid.UUID) error
@@ -223,4 +245,12 @@ type Service interface {
 	// after CreateGoal/GetActiveGoal/Deposit/Withdraw/BuyFromGoal return, so
 	// every goal-shaped response is enriched the same way from one place.
 	Snapshot(ctx context.Context, goal domain.Goal) (GoalSnapshot, error)
+	// GetGoalHistory lists goalID's transactions, scoped server-side so a
+	// previous goal's rows can never appear under this one. A goalID that
+	// doesn't exist, or exists but isn't owned by userID, is masked as
+	// apperror.NotFound identically - the same ownership convention every
+	// other goal method uses. limit/offset follow
+	// transaction.Service.ListHistory's own defaults (non-positive limit
+	// defaults to 20, capped at 100; negative offset clamps to 0).
+	GetGoalHistory(ctx context.Context, userID, goalID uuid.UUID, limit, offset int) ([]HistoryEntry, error)
 }

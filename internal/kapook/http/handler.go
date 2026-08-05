@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/httpserver"
@@ -27,6 +28,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/kapook/goals/withdraw", h.Withdraw)
 	r.Get("/kapook/goals/withdrawal-status", h.GetWithdrawalStatus)
 	r.Post("/kapook/goals/buy", h.BuyFromGoal)
+	r.Get("/kapook/goals/transactions", h.GetGoalHistory)
 }
 
 // AcceptTerms godoc
@@ -308,4 +310,41 @@ func (h *Handler) BuyFromGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.OK(w, http.StatusCreated, toBuyFromGoalResponse(result, snap))
+}
+
+// GetGoalHistory godoc
+// @Summary      List a Kapook goal's transaction history
+// @Description  Lists goalID's deposits, withdrawals and purchases newest-first, scoped server-side so a previous goal on the same account never leaks into this one's history. A goalID that doesn't exist, or isn't owned by the caller, is masked as 404 either way. fee_amount/net_amount are computed server-side from each row's type and amount.
+// @Tags         kapook
+// @Produce      json
+// @Security     BearerAuth
+// @Param        goal_id  query     string  true   "Kapook goal ID (UUID)"
+// @Param        limit    query     int     false  "Max number of rows to return"
+// @Param        offset   query     int     false  "Number of rows to skip"
+// @Success      200  {object}  httpserver.DataEnvelope{data=[]kapookTransactionResponse}
+// @Failure      400  {object}  httpserver.ErrorEnvelope
+// @Failure      401  {object}  httpserver.ErrorEnvelope
+// @Failure      404  {object}  httpserver.ErrorEnvelope
+// @Router       /api/v1/kapook/goals/transactions [get]
+func (h *Handler) GetGoalHistory(w http.ResponseWriter, r *http.Request) {
+	userID, ok := httpserver.RequireUserID(w, r)
+	if !ok {
+		return
+	}
+
+	goalID, err := uuid.Parse(r.URL.Query().Get("goal_id"))
+	if err != nil {
+		httpserver.Error(w, http.StatusBadRequest, "valid goal_id query param is required")
+		return
+	}
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+	entries, err := h.service.GetGoalHistory(r.Context(), userID, goalID, limit, offset)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toKapookTransactionResponses(entries))
 }

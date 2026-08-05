@@ -63,6 +63,8 @@ func (f *fakeTermsRepo) HasAccepted(ctx context.Context, userID uuid.UUID) (bool
 // fakeGoalRepo is a hand-rolled implementation of kapook.GoalRepository.
 type fakeGoalRepo struct {
 	activeByAccount          map[uuid.UUID]kapookdomain.Goal
+	byID                     map[uuid.UUID]kapookdomain.Goal
+	findByIDErr              error
 	findErr                  error
 	createErr                error
 	findForUpdateErr         error
@@ -102,6 +104,17 @@ func (f *fakeGoalRepo) FindActiveByAccountID(ctx context.Context, accountID uuid
 		return kapookdomain.Goal{}, f.findErr
 	}
 	g, ok := f.activeByAccount[accountID]
+	if !ok {
+		return kapookdomain.Goal{}, gorm.ErrRecordNotFound
+	}
+	return g, nil
+}
+
+func (f *fakeGoalRepo) FindByID(ctx context.Context, goalID uuid.UUID) (kapookdomain.Goal, error) {
+	if f.findByIDErr != nil {
+		return kapookdomain.Goal{}, f.findByIDErr
+	}
+	g, ok := f.byID[goalID]
 	if !ok {
 		return kapookdomain.Goal{}, gorm.ErrRecordNotFound
 	}
@@ -351,6 +364,12 @@ type fakeTransactionRepo struct {
 	sumCountResult int
 	sumErr         error
 	lastSumGoalID  uuid.UUID
+
+	listByGoalResult []kapookdomain.Transaction
+	listByGoalErr    error
+	lastListGoalID   uuid.UUID
+	lastListLimit    int
+	lastListOffset   int
 }
 
 func (f *fakeTransactionRepo) Create(ctx context.Context, tx *gorm.DB, t *kapookdomain.Transaction) error {
@@ -368,6 +387,16 @@ func (f *fakeTransactionRepo) CountByGoalAndTypesInWindow(ctx context.Context, t
 		return 0, f.countErr
 	}
 	return f.countResult, nil
+}
+
+func (f *fakeTransactionRepo) ListByGoal(ctx context.Context, goalID uuid.UUID, limit, offset int) ([]kapookdomain.Transaction, error) {
+	f.lastListGoalID = goalID
+	f.lastListLimit = limit
+	f.lastListOffset = offset
+	if f.listByGoalErr != nil {
+		return nil, f.listByGoalErr
+	}
+	return f.listByGoalResult, nil
 }
 
 func (f *fakeTransactionRepo) SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (int64, int, error) {
@@ -2033,5 +2062,113 @@ func TestKapookService_BuyFromGoalInTx(t *testing.T) {
 		_, err := svc.BuyFromGoalInTx(context.Background(), db, userID, kapookAccID, salakAccID, decimal.RequireFromString("1000"))
 		assertAppErrKind(t, err, apperror.KindValidation)
 		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+// --- GetGoalHistory ------------------------------------------------------
+
+func TestKapookService_GetGoalHistory(t *testing.T) {
+	userID := uuid.New()
+
+	t.Run("returns each row with server-computed fee/net, scoped to the given goal", func(t *testing.T) {
+		kapookAccID, goalID := uuid.New(), uuid.New()
+		goal := kapookdomain.Goal{ID: goalID, AccountID: kapookAccID}
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{goalID: goal}
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+		}}
+		deposit := kapookdomain.Transaction{ID: uuid.New(), Type: kapookdomain.TransactionDeposit, Amount: decimal.RequireFromString("500")}
+		withdrawFree := kapookdomain.Transaction{ID: uuid.New(), Type: kapookdomain.TransactionWithdraw, Amount: decimal.RequireFromString("200")}
+		withdrawFee := kapookdomain.Transaction{ID: uuid.New(), Type: kapookdomain.TransactionWithdrawWithFee, Amount: decimal.RequireFromString("1000")}
+		buy := kapookdomain.Transaction{ID: uuid.New(), Type: kapookdomain.TransactionBuySalak, Amount: decimal.RequireFromString("1000")}
+		transactions := &fakeTransactionRepo{listByGoalResult: []kapookdomain.Transaction{withdrawFee, withdrawFree, buy, deposit}}
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, nil, &fakeLedgerRepo{}, transactions, clock.Real{}, &fakeBuySalakService{}, defaultTestCountdownDuration)
+
+		entries, err := svc.GetGoalHistory(context.Background(), userID, goalID, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, entries, 4)
+
+		assert.Equal(t, transactions.lastListGoalID, goalID)
+
+		byType := map[kapookdomain.TransactionType]kapook.HistoryEntry{}
+		for _, e := range entries {
+			byType[e.Transaction.Type] = e
+		}
+
+		depositEntry := byType[kapookdomain.TransactionDeposit]
+		assert.True(t, decimal.Zero.Equal(depositEntry.Fee), "deposit carries no fee")
+		assert.True(t, decimal.RequireFromString("500").Equal(depositEntry.Net))
+
+		freeEntry := byType[kapookdomain.TransactionWithdraw]
+		assert.True(t, decimal.Zero.Equal(freeEntry.Fee), "a free withdrawal carries no fee")
+		assert.True(t, decimal.RequireFromString("200").Equal(freeEntry.Net))
+
+		feeEntry := byType[kapookdomain.TransactionWithdrawWithFee]
+		assert.True(t, decimal.RequireFromString("20").Equal(feeEntry.Fee), "2%% of 1000")
+		assert.True(t, decimal.RequireFromString("980").Equal(feeEntry.Net))
+
+		buyEntry := byType[kapookdomain.TransactionBuySalak]
+		assert.True(t, decimal.Zero.Equal(buyEntry.Fee), "a purchase carries no withdrawal fee")
+		assert.True(t, decimal.RequireFromString("1000").Equal(buyEntry.Net))
+	})
+
+	t.Run("a satang withdraw_with_fee row's fee rounds to two decimal places", func(t *testing.T) {
+		kapookAccID, goalID := uuid.New(), uuid.New()
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{goalID: {ID: goalID, AccountID: kapookAccID}}
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+		}}
+		row := kapookdomain.Transaction{ID: uuid.New(), Type: kapookdomain.TransactionWithdrawWithFee, Amount: decimal.RequireFromString("1000.01")}
+		transactions := &fakeTransactionRepo{listByGoalResult: []kapookdomain.Transaction{row}}
+
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, nil, &fakeLedgerRepo{}, transactions, clock.Real{}, &fakeBuySalakService{}, defaultTestCountdownDuration)
+
+		entries, err := svc.GetGoalHistory(context.Background(), userID, goalID, 10, 0)
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		assert.True(t, decimal.RequireFromString("20.00").Equal(entries[0].Fee), "20.0002 must round to 20.00")
+		assert.True(t, decimal.RequireFromString("980.01").Equal(entries[0].Net))
+	})
+
+	t.Run("a nonexistent goal returns not found", func(t *testing.T) {
+		goals := newFakeGoalRepo()
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), goals, &fakeSalakService{}, &fakeAccountService{}, clock.Real{})
+
+		_, err := svc.GetGoalHistory(context.Background(), userID, uuid.New(), 10, 0)
+		assertAppErrKind(t, err, apperror.KindNotFound)
+	})
+
+	t.Run("a goal owned by a different customer is masked as not found, identically to a missing one", func(t *testing.T) {
+		kapookAccID, goalID := uuid.New(), uuid.New()
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{goalID: {ID: goalID, AccountID: kapookAccID}}
+		accounts := &fakeAccountService{errByID: map[uuid.UUID]error{kapookAccID: apperror.NotFound("account not found")}}
+		svc := newKapookServiceWithClock(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, clock.Real{})
+
+		_, err := svc.GetGoalHistory(context.Background(), userID, goalID, 10, 0)
+		assertAppErrKind(t, err, apperror.KindNotFound)
+	})
+
+	t.Run("limit/offset default and clamp the same way the account ledger endpoint does", func(t *testing.T) {
+		kapookAccID, goalID := uuid.New(), uuid.New()
+		goals := newFakeGoalRepo()
+		goals.byID = map[uuid.UUID]kapookdomain.Goal{goalID: {ID: goalID, AccountID: kapookAccID}}
+		accounts := &fakeAccountService{byID: map[uuid.UUID]accountdomain.Account{
+			kapookAccID: kapookAccount(kapookAccID, userID),
+		}}
+		transactions := &fakeTransactionRepo{}
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, &fakeSalakService{}, accounts, nil, &fakeLedgerRepo{}, transactions, clock.Real{}, &fakeBuySalakService{}, defaultTestCountdownDuration)
+
+		_, err := svc.GetGoalHistory(context.Background(), userID, goalID, 0, -5)
+		require.NoError(t, err)
+		assert.Equal(t, 20, transactions.lastListLimit, "non-positive limit defaults to 20")
+		assert.Equal(t, 0, transactions.lastListOffset, "negative offset clamps to 0")
+
+		_, err = svc.GetGoalHistory(context.Background(), userID, goalID, 500, 0)
+		require.NoError(t, err)
+		assert.Equal(t, 100, transactions.lastListLimit, "limit caps at 100")
 	})
 }

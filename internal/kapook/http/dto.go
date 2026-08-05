@@ -151,3 +151,39 @@ func toBuyFromGoalResponse(r kapook.BuyFromGoalResult, snap kapook.GoalSnapshot)
 		MaturityDate:  receipt.MaturityDate,
 	}
 }
+
+// kapookTransactionResponse is one row of a goal's history.
+// IsAutomaticPurchase is nil until ticket 10's worker starts populating it -
+// omitted from the JSON envelope entirely rather than serialized as
+// `false`, so a client can tell "not yet known" apart from "definitely a
+// customer-initiated purchase" once that distinction starts to matter.
+type kapookTransactionResponse struct {
+	ID                  uuid.UUID       `json:"id"`
+	Type                string          `json:"type"`
+	Amount              decimal.Decimal `json:"amount"`
+	FeeAmount           decimal.Decimal `json:"fee_amount"`
+	NetAmount           decimal.Decimal `json:"net_amount"`
+	IsAutomaticPurchase *bool           `json:"is_automatic_purchase,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+}
+
+func toKapookTransactionResponse(e kapook.HistoryEntry) kapookTransactionResponse {
+	t := e.Transaction
+	return kapookTransactionResponse{
+		ID:                  t.ID,
+		Type:                string(t.Type),
+		Amount:              t.Amount,
+		FeeAmount:           e.Fee,
+		NetAmount:           e.Net,
+		IsAutomaticPurchase: t.IsAutomaticPurchase,
+		CreatedAt:           t.CreatedAt,
+	}
+}
+
+func toKapookTransactionResponses(entries []kapook.HistoryEntry) []kapookTransactionResponse {
+	resp := make([]kapookTransactionResponse, len(entries))
+	for i, e := range entries {
+		resp[i] = toKapookTransactionResponse(e)
+	}
+	return resp
+}
