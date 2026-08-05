@@ -25,9 +25,18 @@ func (r *GormHoldingRepository) Create(ctx context.Context, tx *gorm.DB, h *doma
 	return tx.WithContext(ctx).Create(h).Error
 }
 
+// FindByAccountID excludes settled holdings - once SettleMaturedHolding pays
+// one out, its value is already gone from the account's own balance, so
+// listing it alongside still-live holdings would show a ticket whose money
+// isn't there anymore. This is the only caller of this query today (the
+// customer-facing holdings list); a future "matured/redeemed history" view
+// would need its own method rather than relaxing this filter.
 func (r *GormHoldingRepository) FindByAccountID(ctx context.Context, accountID uuid.UUID) ([]domain.Holding, error) {
 	var holdings []domain.Holding
-	err := r.db.WithContext(ctx).Where("account_id = ?", accountID).Order("purchase_date DESC").Find(&holdings).Error
+	err := r.db.WithContext(ctx).
+		Where("account_id = ? AND settled_at IS NULL", accountID).
+		Order("purchase_date DESC").
+		Find(&holdings).Error
 	return holdings, err
 }
 
