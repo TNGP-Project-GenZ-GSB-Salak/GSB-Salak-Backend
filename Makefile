@@ -1,4 +1,4 @@
-.PHONY: run worker dev migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report
+.PHONY: run worker dev migrate-up migrate-down migrate-version seed docker-up docker-down build test test-integration swagger frontend-install frontend-run frontend-test frontend-report admin-run
 
 build:
 	go build -o bin/api ./cmd/api
@@ -60,3 +60,6 @@ frontend-test:
 
 frontend-report:
 	cd testfrontend && npm run report
+
+admin-run:
+	cd adminfrontend && node server.js

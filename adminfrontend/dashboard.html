@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Dashboard - GSB Salak Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>GSB Salak Admin</h1>
+    <button id="logout-button" data-testid="logout-button">Log out</button>
+  </header>
+
+  <!-- One <section> per concern - this is the only panel today, but a
+       future observability dashboard adds more sections here, not a
+       restructure of this one. -->
+  <section>
+    <h2>Salak Actions</h2>
+    <p>
+      Force-settles a Salak holding immediately - pays out principal + interest
+      to the owning customer's primary account, regardless of its real
+      maturity date. Demo/ops action only; a real production trigger would be
+      time-driven instead.
+    </p>
+
+    <form id="settle-form" data-testid="settle-form">
+      <label>
+        Holding ID
+        <input name="holdingId" data-testid="holding-id-input" required />
+      </label>
+      <button type="submit" data-testid="settle-submit-button">Force Settle Holding</button>
+    </form>
+
+    <p id="settle-message" class="hidden" data-testid="settle-message"></p>
+
+    <table id="settle-result" class="hidden" data-testid="settle-result">
+      <tbody>
+        <tr><th>Holding ID</th><td data-field="holding_id"></td></tr>
+        <tr><th>Principal</th><td data-field="principal"></td></tr>
+        <tr><th>Interest</th><td data-field="interest"></td></tr>
+        <tr><th>Total</th><td data-field="total"></td></tr>
+        <tr><th>Primary account ID</th><td data-field="primary_account_id"></td></tr>
+        <tr><th>Primary balance after</th><td data-field="primary_balance_after"></td></tr>
+        <tr><th>Settled at</th><td data-field="settled_at"></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <script src="api.js"></script>
+  <script>
+    requireAdminAuth();
+
+    document.getElementById("logout-button").addEventListener("click", () => {
+      clearAdminToken();
+      window.location.href = "login.html";
+    });
+
+    const form = document.getElementById("settle-form");
+    const message = document.getElementById("settle-message");
+    const result = document.getElementById("settle-result");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearMessage(message);
+      result.classList.add("hidden");
+
+      const holdingId = new FormData(form).get("holdingId").trim();
+      try {
+        const data = await apiFetch(`/admin/holdings/${encodeURIComponent(holdingId)}/settle`, {
+          method: "POST",
+        });
+        for (const [field, value] of Object.entries(data)) {
+          const cell = result.querySelector(`[data-field="${field}"]`);
+          if (cell) cell.textContent = value;
+        }
+        result.classList.remove("hidden");
+      } catch (err) {
+        showError(message, err);
+      }
+    });
+  </script>
+</body>
+</html>

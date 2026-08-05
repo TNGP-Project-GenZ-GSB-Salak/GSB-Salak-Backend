@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>GSB Salak Admin</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>GSB Salak Admin</h1>
+  </header>
+  <section>
+    <nav>
+      <a href="login.html" data-testid="nav-login">Log in</a>
+    </nav>
+  </section>
+
+  <script src="api.js"></script>
+  <script>
+    if (getAdminToken()) {
+      window.location.href = "dashboard.html";
+    }
+  </script>
+</body>
+</html>
