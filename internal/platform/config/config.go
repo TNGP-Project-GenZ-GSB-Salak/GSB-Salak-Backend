@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/shopspring/decimal"
 )
 
 type DBConfig struct {
@@ -46,6 +48,13 @@ type Config struct {
 	// a 20-30 minute presentation, and the worker's real code path runs
 	// unchanged either way.
 	KapookCountdownDuration time.Duration
+	// RegistrationSavingsStartingBalance funds a new user's savings account
+	// at registration - in the spirit of SEED_DEMO_DATA/
+	// KAPOOK_COUNTDOWN_DURATION, a demo/test knob tuned without a code
+	// change. The committed default is 0, so this repository never says
+	// "every new customer receives money" - cmd/seed's demo user (฿50,000)
+	// is unaffected, since this governs registration only.
+	RegistrationSavingsStartingBalance decimal.Decimal
 }
 
 func Load() Config {
@@ -60,10 +69,11 @@ func Load() Config {
 			Name:     getEnv("DB_NAME", "gsb_salak"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
-		JWTSecret:               getEnv("JWT_SECRET", ""),
-		JWTExpiryMins:           getEnvInt("JWT_EXPIRY_MINUTES", 60),
-		SeedDemoData:            getEnvBool("SEED_DEMO_DATA", false),
-		KapookCountdownDuration: getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
+		JWTSecret:                          getEnv("JWT_SECRET", ""),
+		JWTExpiryMins:                      getEnvInt("JWT_EXPIRY_MINUTES", 60),
+		SeedDemoData:                       getEnvBool("SEED_DEMO_DATA", false),
+		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
+		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", decimal.Zero),
 	}
 
 	cfg.MigrateDSN = getEnv("MIGRATE_DATABASE_URL", cfg.DB.URL())
@@ -106,6 +116,15 @@ func getEnvBool(key string, fallback bool) bool {
 func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return fallback
+}
+
+func getEnvDecimal(key string, fallback decimal.Decimal) decimal.Decimal {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if d, err := decimal.NewFromString(v); err == nil {
 			return d
 		}
 	}

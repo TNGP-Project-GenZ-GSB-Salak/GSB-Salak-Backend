@@ -4,22 +4,30 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/account"
+	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/jwtutil"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/user"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/user/domain"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type AuthService struct {
-	repo   user.Repository
-	signer *jwtutil.Signer
+	repo     user.Repository
+	signer   *jwtutil.Signer
+	accounts account.Service
+	db       *gorm.DB
+	// savingsStartingBalance funds the savings account Register opens, from
+	// config.Config.RegistrationSavingsStartingBalance (0 by default).
+	savingsStartingBalance decimal.Decimal
 }
 
-func NewAuthService(repo user.Repository, signer *jwtutil.Signer) *AuthService {
-	return &AuthService{repo: repo, signer: signer}
+func NewAuthService(repo user.Repository, signer *jwtutil.Signer, accounts account.Service, db *gorm.DB, savingsStartingBalance decimal.Decimal) *AuthService {
+	return &AuthService{repo: repo, signer: signer, accounts: accounts, db: db, savingsStartingBalance: savingsStartingBalance}
 }
 
 var _ user.Service = (*AuthService)(nil)
@@ -49,8 +57,30 @@ func (s *AuthService) Register(ctx context.Context, username, password, fullName
 		PasswordHash: string(hash),
 		FullName:     fullName,
 	}
-	if err := s.repo.Create(ctx, nil, u); err != nil {
-		return domain.User{}, apperror.Internal("failed to create user", err)
+
+	// user orchestrates: the user row and all three accounts open atomically,
+	// following the codebase's precedent that the domain owning a flow
+	// orchestrates it (transaction orchestrates account+salak, kapook
+	// orchestrates account+salak+transaction; registration is user's flow).
+	// Without all three, the Kapook flow fails partway rather than not at
+	// all - see the linked decision ticket for why savings alone isn't enough.
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.Create(ctx, tx, u); err != nil {
+			return apperror.Internal("failed to create user", err)
+		}
+		if _, err := s.accounts.Create(ctx, tx, u.ID, accountdomain.TypeSavings, s.savingsStartingBalance, true); err != nil {
+			return apperror.Internal("failed to create savings account", err)
+		}
+		if _, err := s.accounts.Create(ctx, tx, u.ID, accountdomain.TypeSalak, decimal.Zero, false); err != nil {
+			return apperror.Internal("failed to create salak account", err)
+		}
+		if _, err := s.accounts.Create(ctx, tx, u.ID, accountdomain.TypeKapook, decimal.Zero, false); err != nil {
+			return apperror.Internal("failed to create kapook account", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.User{}, err
 	}
 	return *u, nil
 }

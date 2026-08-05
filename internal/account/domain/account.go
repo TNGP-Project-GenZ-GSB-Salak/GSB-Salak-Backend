@@ -25,8 +25,14 @@ type Account struct {
 	Type          Type
 	Balance       decimal.Decimal
 	Currency      string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// IsPrimaryAccount flags the บัญชีคู่โอน - at most one per user (a
+	// partial unique index), and only ever true for a savings-type account
+	// (a check constraint). Reach it only through account.Service -
+	// GetPrimaryAccount for lookup, Create's isPrimary parameter for
+	// provisioning - never read this field directly outside the domain.
+	IsPrimaryAccount bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 func (Account) TableName() string {

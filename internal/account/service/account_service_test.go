@@ -19,13 +19,16 @@ import (
 type fakeAccountRepo struct {
 	byID map[uuid.UUID]domain.Account
 
-	findByUserIDErr   error
-	findByIDErr       error
-	findForUpdateErr  error
-	updateBalanceErr  error
-	createErr         error
-	lastUpdatedID     uuid.UUID
-	lastUpdatedAmount decimal.Decimal
+	findByUserIDErr      error
+	findByIDErr          error
+	findForUpdateErr     error
+	findPrimaryByUserErr error
+	updateBalanceErr     error
+	createErr            error
+	nextAccountNumberErr error
+	lastUpdatedID        uuid.UUID
+	lastUpdatedAmount    decimal.Decimal
+	nextAccountNumber    string
 }
 
 func newFakeAccountRepo(accounts ...domain.Account) *fakeAccountRepo {
@@ -89,6 +92,28 @@ func (f *fakeAccountRepo) UpdateBalance(ctx context.Context, tx *gorm.DB, id uui
 	a.Balance = newBalance
 	f.byID[id] = a
 	return nil
+}
+
+func (f *fakeAccountRepo) FindPrimaryByUserID(ctx context.Context, userID uuid.UUID) (domain.Account, error) {
+	if f.findPrimaryByUserErr != nil {
+		return domain.Account{}, f.findPrimaryByUserErr
+	}
+	for _, a := range f.byID {
+		if a.UserID == userID && a.IsPrimaryAccount {
+			return a, nil
+		}
+	}
+	return domain.Account{}, gorm.ErrRecordNotFound
+}
+
+func (f *fakeAccountRepo) NextAccountNumber(ctx context.Context, tx *gorm.DB, accountType domain.Type) (string, error) {
+	if f.nextAccountNumberErr != nil {
+		return "", f.nextAccountNumberErr
+	}
+	if f.nextAccountNumber != "" {
+		return f.nextAccountNumber, nil
+	}
+	return "TEST" + uuid.New().String()[:16], nil
 }
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {
@@ -282,5 +307,87 @@ func TestAccountService_Credit(t *testing.T) {
 		newBal, err := svc.Credit(context.Background(), nil, accountID, decimal.Zero)
 		require.NoError(t, err)
 		assert.True(t, mustDecimal(t, "100.00").Equal(newBal))
+	})
+}
+
+func TestAccountService_Create(t *testing.T) {
+	userID := uuid.New()
+
+	t.Run("success generates a number, persists, and returns the account", func(t *testing.T) {
+		repo := newFakeAccountRepo()
+		repo.nextAccountNumber = "6100000001"
+		svc := service.NewAccountService(repo)
+
+		a, err := svc.Create(context.Background(), nil, userID, domain.TypeSavings, mustDecimal(t, "1000000"), true)
+		require.NoError(t, err)
+		assert.Equal(t, userID, a.UserID)
+		assert.Equal(t, domain.TypeSavings, a.Type)
+		assert.Equal(t, "6100000001", a.AccountNumber)
+		assert.True(t, mustDecimal(t, "1000000").Equal(a.Balance))
+		assert.True(t, a.IsPrimaryAccount)
+
+		stored, ok := repo.byID[a.ID]
+		require.True(t, ok, "the created account must actually be persisted")
+		assert.Equal(t, a, stored)
+	})
+
+	t.Run("non-primary account is created with the flag false", func(t *testing.T) {
+		repo := newFakeAccountRepo()
+		svc := service.NewAccountService(repo)
+
+		a, err := svc.Create(context.Background(), nil, userID, domain.TypeKapook, decimal.Zero, false)
+		require.NoError(t, err)
+		assert.False(t, a.IsPrimaryAccount)
+	})
+
+	t.Run("account-number generation failure returns internal error", func(t *testing.T) {
+		repo := newFakeAccountRepo()
+		repo.nextAccountNumberErr = errors.New("sequence unreachable")
+		svc := service.NewAccountService(repo)
+
+		_, err := svc.Create(context.Background(), nil, userID, domain.TypeSavings, decimal.Zero, true)
+		assertAppErrKind(t, err, apperror.KindInternal)
+	})
+
+	t.Run("repo create failure returns internal error", func(t *testing.T) {
+		repo := newFakeAccountRepo()
+		repo.createErr = errors.New("write failed")
+		svc := service.NewAccountService(repo)
+
+		_, err := svc.Create(context.Background(), nil, userID, domain.TypeSavings, decimal.Zero, true)
+		assertAppErrKind(t, err, apperror.KindInternal)
+	})
+}
+
+func TestAccountService_GetPrimaryAccount(t *testing.T) {
+	userID := uuid.New()
+
+	t.Run("success returns the flagged account", func(t *testing.T) {
+		primary := domain.Account{ID: uuid.New(), UserID: userID, Type: domain.TypeSavings, IsPrimaryAccount: true}
+		other := domain.Account{ID: uuid.New(), UserID: userID, Type: domain.TypeSalak}
+		repo := newFakeAccountRepo(primary, other)
+		svc := service.NewAccountService(repo)
+
+		a, err := svc.GetPrimaryAccount(context.Background(), userID)
+		require.NoError(t, err)
+		assert.Equal(t, primary.ID, a.ID)
+	})
+
+	t.Run("no primary account returns not found, not a silent guess", func(t *testing.T) {
+		other := domain.Account{ID: uuid.New(), UserID: userID, Type: domain.TypeSavings}
+		repo := newFakeAccountRepo(other)
+		svc := service.NewAccountService(repo)
+
+		_, err := svc.GetPrimaryAccount(context.Background(), userID)
+		assertAppErrKind(t, err, apperror.KindNotFound)
+	})
+
+	t.Run("repo error returns internal error", func(t *testing.T) {
+		repo := newFakeAccountRepo()
+		repo.findPrimaryByUserErr = errors.New("db down")
+		svc := service.NewAccountService(repo)
+
+		_, err := svc.GetPrimaryAccount(context.Background(), userID)
+		assertAppErrKind(t, err, apperror.KindInternal)
 	})
 }

@@ -90,6 +90,16 @@ func (f *fakeAccountService) GetByIDUnscoped(ctx context.Context, accountID uuid
 	return f.GetByID(ctx, uuid.Nil, accountID)
 }
 
+// Create and GetPrimaryAccount are unused by this suite (it tests the
+// buy-Salak flow, not registration) - stubbed only to satisfy account.Service.
+func (f *fakeAccountService) Create(ctx context.Context, tx *gorm.DB, userID uuid.UUID, accountType accountdomain.Type, startingBalance decimal.Decimal, isPrimary bool) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
+func (f *fakeAccountService) GetPrimaryAccount(ctx context.Context, userID uuid.UUID) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
 // fakeSalakService is a hand-rolled implementation of salak.Service.
 type fakeSalakService struct {
 	getProductResult salakdomain.Product

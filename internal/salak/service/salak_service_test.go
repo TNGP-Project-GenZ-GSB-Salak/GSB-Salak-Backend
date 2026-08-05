@@ -182,6 +182,17 @@ func (f *fakeAccountService) GetByIDUnscoped(ctx context.Context, accountID uuid
 	return f.GetByID(ctx, uuid.Nil, accountID)
 }
 
+// Create and GetPrimaryAccount are unused by this suite (it tests salak
+// product/purchase logic, not registration) - stubbed only to satisfy
+// account.Service.
+func (f *fakeAccountService) Create(ctx context.Context, tx *gorm.DB, userID uuid.UUID, accountType accountdomain.Type, startingBalance decimal.Decimal, isPrimary bool) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
+func (f *fakeAccountService) GetPrimaryAccount(ctx context.Context, userID uuid.UUID) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {

@@ -135,6 +135,10 @@ func main() {
 		Type:          accountdomain.TypeSavings,
 		Balance:       decimal.NewFromInt(50_000),
 		Currency:      "THB",
+		// The demo user's บัญชีคู่โอน - withdrawal resolves its destination
+		// through this seam, so a demo user without the flag can't withdraw
+		// at all (blocking for the demo, per the build's own concerns doc).
+		IsPrimaryAccount: true,
 	}
 	salakAccount := accountdomain.Account{
 		ID:            demoSalakAccountID,

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
@@ -100,6 +101,93 @@ func TestAccountRepo_Create_NegativeBalanceRejectedByCheckConstraint(t *testing.
 	}
 	err := repo.Create(context.Background(), tx, a)
 	requirePgErrorCode(t, err, sqlStateCheckViolation)
+}
+
+func TestAccountRepo_Create_IsPrimaryAccountRoundTrips(t *testing.T) {
+	tx := newTestTx(t)
+	user := mustCreateUser(t, tx, "")
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	a := &accountdomain.Account{
+		ID:               uuid.New(),
+		UserID:           user.ID,
+		AccountNumber:    uniqueAccountNumber(),
+		Type:             accountdomain.TypeSavings,
+		Currency:         "THB",
+		IsPrimaryAccount: true,
+	}
+	require.NoError(t, repo.Create(context.Background(), tx, a))
+
+	got, err := repo.FindByID(context.Background(), a.ID)
+	require.NoError(t, err)
+	assert.True(t, got.IsPrimaryAccount)
+}
+
+func TestAccountRepo_Create_SecondPrimaryAccountRejectedByUniqueIndex(t *testing.T) {
+	tx := newTestTx(t)
+	user := mustCreateUser(t, tx, "")
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	first := &accountdomain.Account{
+		ID: uuid.New(), UserID: user.ID, AccountNumber: uniqueAccountNumber(),
+		Type: accountdomain.TypeSavings, Currency: "THB", IsPrimaryAccount: true,
+	}
+	require.NoError(t, repo.Create(context.Background(), tx, first))
+
+	second := &accountdomain.Account{
+		ID: uuid.New(), UserID: user.ID, AccountNumber: uniqueAccountNumber(),
+		Type: accountdomain.TypeSavings, Currency: "THB", IsPrimaryAccount: true,
+	}
+	err := repo.Create(context.Background(), tx, second)
+	requirePgErrorCode(t, err, sqlStateUniqueViolation)
+}
+
+func TestAccountRepo_Create_TwoUsersEachHaveTheirOwnPrimaryAccount(t *testing.T) {
+	tx := newTestTx(t)
+	userA := mustCreateUser(t, tx, "")
+	userB := mustCreateUser(t, tx, "")
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	for _, userID := range []uuid.UUID{userA.ID, userB.ID} {
+		a := &accountdomain.Account{
+			ID: uuid.New(), UserID: userID, AccountNumber: uniqueAccountNumber(),
+			Type: accountdomain.TypeSavings, Currency: "THB", IsPrimaryAccount: true,
+		}
+		require.NoError(t, repo.Create(context.Background(), tx, a), "the partial unique index is scoped per user_id, not global")
+	}
+}
+
+func TestAccountRepo_Create_PrimaryOnNonSavingsRejectedByCheckConstraint(t *testing.T) {
+	tx := newTestTx(t)
+	user := mustCreateUser(t, tx, "")
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	a := &accountdomain.Account{
+		ID: uuid.New(), UserID: user.ID, AccountNumber: uniqueAccountNumber(),
+		Type: accountdomain.TypeKapook, Currency: "THB", IsPrimaryAccount: true,
+	}
+	err := repo.Create(context.Background(), tx, a)
+	requirePgErrorCode(t, err, sqlStateCheckViolation)
+}
+
+func TestAccountRepo_NextAccountNumber_IsUniqueAndTypePrefixed(t *testing.T) {
+	tx := newTestTx(t)
+	repo := accountrepo.NewGormAccountRepository(tx)
+
+	savings1, err := repo.NextAccountNumber(context.Background(), tx, accountdomain.TypeSavings)
+	require.NoError(t, err)
+	savings2, err := repo.NextAccountNumber(context.Background(), tx, accountdomain.TypeSavings)
+	require.NoError(t, err)
+	salak, err := repo.NextAccountNumber(context.Background(), tx, accountdomain.TypeSalak)
+	require.NoError(t, err)
+	kapook, err := repo.NextAccountNumber(context.Background(), tx, accountdomain.TypeKapook)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, savings1, savings2, "sequential calls must not repeat a number")
+	assert.True(t, strings.HasPrefix(savings1, "61"))
+	assert.True(t, strings.HasPrefix(savings2, "61"))
+	assert.True(t, strings.HasPrefix(salak, "62"))
+	assert.True(t, strings.HasPrefix(kapook, "63"))
 }
 
 func TestAccountRepo_Create_UnknownUserIDRejectedByForeignKey(t *testing.T) {

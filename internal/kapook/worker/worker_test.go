@@ -95,6 +95,16 @@ func (f *fakeAccountService) LockForUpdate(ctx context.Context, tx *gorm.DB, acc
 	return f.GetByIDUnscoped(ctx, accountID)
 }
 
+// Create and GetPrimaryAccount are unused by the worker - stubbed only to
+// satisfy account.Service.
+func (f *fakeAccountService) Create(ctx context.Context, tx *gorm.DB, userID uuid.UUID, accountType accountdomain.Type, startingBalance decimal.Decimal, isPrimary bool) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
+func (f *fakeAccountService) GetPrimaryAccount(ctx context.Context, userID uuid.UUID) (accountdomain.Account, error) {
+	return accountdomain.Account{}, nil
+}
+
 // fakeKapookService implements kapook.Service; the worker only calls
 // BuyFromGoalInTx.
 type fakeKapookService struct {

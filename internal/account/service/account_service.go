@@ -53,6 +53,36 @@ func (s *AccountService) GetByIDUnscoped(ctx context.Context, accountID uuid.UUI
 	return a, nil
 }
 
+func (s *AccountService) Create(ctx context.Context, tx *gorm.DB, userID uuid.UUID, accountType domain.Type, startingBalance decimal.Decimal, isPrimary bool) (domain.Account, error) {
+	number, err := s.repo.NextAccountNumber(ctx, tx, accountType)
+	if err != nil {
+		return domain.Account{}, apperror.Internal("failed to generate account number", err)
+	}
+	a := &domain.Account{
+		ID:               uuid.New(),
+		UserID:           userID,
+		AccountNumber:    number,
+		Type:             accountType,
+		Balance:          startingBalance,
+		Currency:         "THB",
+		IsPrimaryAccount: isPrimary,
+	}
+	if err := s.repo.Create(ctx, tx, a); err != nil {
+		return domain.Account{}, apperror.Internal("failed to create account", err)
+	}
+	return *a, nil
+}
+
+func (s *AccountService) GetPrimaryAccount(ctx context.Context, userID uuid.UUID) (domain.Account, error) {
+	a, err := s.repo.FindPrimaryByUserID(ctx, userID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return domain.Account{}, apperror.NotFound("no primary account for this user")
+	} else if err != nil {
+		return domain.Account{}, apperror.Internal("failed to look up primary account", err)
+	}
+	return a, nil
+}
+
 func (s *AccountService) Debit(ctx context.Context, tx *gorm.DB, accountID uuid.UUID, amount decimal.Decimal) (decimal.Decimal, error) {
 	a, err := s.repo.FindForUpdate(ctx, tx, accountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
