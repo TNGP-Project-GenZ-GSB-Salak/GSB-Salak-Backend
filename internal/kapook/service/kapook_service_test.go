@@ -1780,6 +1780,8 @@ func TestKapookService_BuyFromGoal(t *testing.T) {
 		assert.Equal(t, goal.ID, transactions.lastCreated.GoalID)
 		require.NotNil(t, transactions.lastCreated.HoldingID)
 		assert.Equal(t, holdingID, *transactions.lastCreated.HoldingID)
+		require.NotNil(t, transactions.lastCreated.IsAutomaticPurchase)
+		assert.False(t, *transactions.lastCreated.IsAutomaticPurchase, "a customer-initiated purchase is never marked automatic")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -2014,11 +2016,12 @@ func TestKapookService_BuyFromGoalInTx(t *testing.T) {
 		holdingID := uuid.New()
 		buySalakSvc := &fakeBuySalakService{buySalakForKapookResult: transaction.BuySalakReceipt{HoldingID: holdingID}}
 
+		transactions := &fakeTransactionRepo{}
 		db, mock := newSQLMockDB(t)
 		mock.ExpectBegin() // the savepoint's own tx.Transaction call - a plain BEGIN here since db isn't itself already nested
 		mock.ExpectCommit()
 
-		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, nil, &fakeLedgerRepo{}, &fakeTransactionRepo{}, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
+		svc := service.NewKapookService(newFakeTermsRepo(), goals, salakSvc, accounts, nil, &fakeLedgerRepo{}, transactions, clock.Real{}, buySalakSvc, defaultTestCountdownDuration)
 
 		result, err := svc.BuyFromGoalInTx(context.Background(), db, userID, kapookAccID, salakAccID, decimal.RequireFromString("2000"))
 		require.NoError(t, err)
@@ -2026,6 +2029,8 @@ func TestKapookService_BuyFromGoalInTx(t *testing.T) {
 		assert.True(t, decimal.RequireFromString("2000").Equal(result.Goal.SalakAmount))
 		assert.Equal(t, holdingID, result.Receipt.HoldingID)
 		assert.Equal(t, 1, buySalakSvc.callCount)
+		require.NotNil(t, transactions.lastCreated.IsAutomaticPurchase)
+		assert.True(t, *transactions.lastCreated.IsAutomaticPurchase, "the worker-driven path always marks its own purchase automatic")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 

@@ -205,3 +205,56 @@ func TestKapookWorker_RunOnce_ConcurrentPasses_MintExactlyOneHolding(t *testing.
 	assert.False(t, gotGoal.IsActive)
 	assert.True(t, decimal.RequireFromString("5000").Equal(gotGoal.SalakAmount))
 }
+
+// TestKapookWorker_RunOnce_ShortenedCountdown_CompletesUnattendedAndMarksAutomatic
+// is the ticket's required "drives a shortened countdown" proof: unlike the
+// other tests in this file, which hand-craft a Goal row with a synthetic
+// past GoalReachedAt, this one reaches the target through the real
+// CreateGoal/Deposit path (so GoalReachedAt is stamped by the service, not
+// this test), configures a two-second countdown, waits for it to actually
+// elapse, and only then runs the worker - proving the full pipeline, not
+// just RunOnce's claiming logic in isolation. It also asserts the resulting
+// purchase carries the automatic-purchase marker, which only
+// BuyFromGoalInTx ever sets to true.
+func TestKapookWorker_RunOnce_ShortenedCountdown_CompletesUnattendedAndMarksAutomatic(t *testing.T) {
+	tx := newTestTx(t)
+	ctx := context.Background()
+	user := mustCreateUser(t, tx, "")
+	kapookAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeKapook, decimal.Zero)
+	savingsAcc := mustCreateAccount(t, tx, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+	mustCreateAccount(t, tx, user.ID, accountdomain.TypeSalak, decimal.Zero)
+	product := mustCreateProduct(t, tx, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("10000"), decimal.RequireFromString("1000"))
+
+	kapookSvc, termsRepo := newKapookService(tx)
+	require.NoError(t, termsRepo.Accept(ctx, user.ID))
+	goal, err := kapookSvc.CreateGoal(ctx, user.ID, kapookAcc.ID, product.ID, decimal.RequireFromString("1000"))
+	require.NoError(t, err)
+	_, err = kapookSvc.Deposit(ctx, user.ID, kapookAcc.ID, savingsAcc.ID, decimal.RequireFromString("1000"))
+	require.NoError(t, err) // reaches the target, stamping GoalReachedAt to the real "now"
+
+	const shortCountdown = 2 * time.Second
+	time.Sleep(shortCountdown + 500*time.Millisecond)
+
+	w := newWorkerOn(tx, shortCountdown)
+	summary, err := w.RunOnce(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Claimed)
+	require.Len(t, summary.Results, 1)
+	assert.Equal(t, worker.OutcomePurchased, summary.Results[0].Outcome)
+
+	var gotGoal kapookdomain.Goal
+	require.NoError(t, tx.Where("id = ?", goal.ID).First(&gotGoal).Error)
+	assert.False(t, gotGoal.IsActive, "buying the full available balance completes and closes the goal")
+
+	txns, err := kapookrepo.NewGormTransactionRepository(tx).ListByGoal(ctx, goal.ID, 20, 0)
+	require.NoError(t, err)
+	var purchase *kapookdomain.Transaction
+	for i := range txns {
+		if txns[i].Type == kapookdomain.TransactionBuySalak {
+			purchase = &txns[i]
+		}
+	}
+	require.NotNil(t, purchase, "the worker must have recorded the purchase")
+	require.NotNil(t, purchase.IsAutomaticPurchase)
+	assert.True(t, *purchase.IsAutomaticPurchase, "the worker's own purchase must be marked automatic")
+}

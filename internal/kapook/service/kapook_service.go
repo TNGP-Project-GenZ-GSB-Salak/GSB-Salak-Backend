@@ -597,7 +597,9 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID uu
 // no ledger pair of its own; the one BuySalakForKapook writes is the whole
 // record. SavingAmount is untouched here (see domain.Goal.AvailableBalance);
 // only SalakAmount grows, and only a purchase that fully satisfies
-// GoalAmount deactivates the goal.
+// GoalAmount deactivates the goal. isAutomatic is always false here - a
+// customer-initiated purchase, as opposed to BuyFromGoalInTx's worker-only
+// unattended one.
 func (s *KapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
 	if err := s.validateBuyFromGoalAccounts(ctx, userID, kapookAccountID, salakAccountID, amount); err != nil {
 		return kapook.BuyFromGoalResult{}, err
@@ -605,7 +607,7 @@ func (s *KapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID
 
 	var result kapook.BuyFromGoalResult
 	err := s.db.Transaction(func(tx *gorm.DB) error {
-		r, err := s.buyFromGoalCore(ctx, tx, userID, kapookAccountID, salakAccountID, amount)
+		r, err := s.buyFromGoalCore(ctx, tx, userID, kapookAccountID, salakAccountID, amount, false)
 		result = r
 		return err
 	})
@@ -620,7 +622,9 @@ func (s *KapookService) BuyFromGoal(ctx context.Context, userID, kapookAccountID
 // already inside an open transaction (the worker's own claiming tx), GORM
 // turns it into a SAVEPOINT, so this purchase's own failure rolls back to
 // that savepoint without aborting the worker's transaction or losing its
-// locks on any other goal claimed in the same pass.
+// locks on any other goal claimed in the same pass. isAutomatic is always
+// true here - the marker the history endpoint and the Salak overview's
+// "bought for you automatically" notice both read.
 func (s *KapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
 	if err := s.validateBuyFromGoalAccounts(ctx, userID, kapookAccountID, salakAccountID, amount); err != nil {
 		return kapook.BuyFromGoalResult{}, err
@@ -628,7 +632,7 @@ func (s *KapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID
 
 	var result kapook.BuyFromGoalResult
 	err := tx.Transaction(func(spTx *gorm.DB) error {
-		r, err := s.buyFromGoalCore(ctx, spTx, userID, kapookAccountID, salakAccountID, amount)
+		r, err := s.buyFromGoalCore(ctx, spTx, userID, kapookAccountID, salakAccountID, amount, true)
 		result = r
 		return err
 	})
@@ -706,8 +710,12 @@ func (s *KapookService) validateBuyFromGoalAccounts(ctx context.Context, userID,
 }
 
 // buyFromGoalCore is BuyFromGoal/BuyFromGoalInTx's shared body, run inside
-// whichever transaction the caller opened (a top-level one, or a savepoint).
-func (s *KapookService) buyFromGoalCore(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (kapook.BuyFromGoalResult, error) {
+// whichever transaction the caller opened (a top-level one, or a
+// savepoint). isAutomatic is stamped onto the resulting kapook_transaction
+// row verbatim - true only for BuyFromGoalInTx's worker-driven call, so
+// history and the "bought for you automatically" notice can always tell
+// which purchases the customer never had to act on.
+func (s *KapookService) buyFromGoalCore(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal, isAutomatic bool) (kapook.BuyFromGoalResult, error) {
 	goal, err := s.goals.FindActiveByAccountIDForUpdate(ctx, tx, kapookAccountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return kapook.BuyFromGoalResult{}, apperror.NotFound("no active goal for this account")
@@ -745,12 +753,13 @@ func (s *KapookService) buyFromGoalCore(ctx context.Context, tx *gorm.DB, userID
 
 	holdingID := receipt.HoldingID
 	kapookTx := &domain.Transaction{
-		ID:              uuid.New(),
-		Type:            domain.TransactionBuySalak,
-		Amount:          amount,
-		KapookAccountID: kapookAccountID,
-		GoalID:          goal.ID,
-		HoldingID:       &holdingID,
+		ID:                  uuid.New(),
+		Type:                domain.TransactionBuySalak,
+		Amount:              amount,
+		KapookAccountID:     kapookAccountID,
+		GoalID:              goal.ID,
+		HoldingID:           &holdingID,
+		IsAutomaticPurchase: &isAutomatic,
 	}
 	if err := s.transactions.Create(ctx, tx, kapookTx); err != nil {
 		return kapook.BuyFromGoalResult{}, apperror.Internal("failed to record kapook transaction", err)
