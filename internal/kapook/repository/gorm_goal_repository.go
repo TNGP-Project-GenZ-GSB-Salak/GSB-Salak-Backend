@@ -67,9 +67,12 @@ func (r *GormGoalRepository) UpdateAfterPurchase(ctx context.Context, tx *gorm.D
 		Model(&domain.Goal{}).
 		Where("id = ?", goalID).
 		Updates(map[string]interface{}{
-			"salak_amount":                 newSalakAmount,
-			"is_active":                    stillActive,
-			"auto_purchase_deferred_until": nil,
+			"salak_amount":                    newSalakAmount,
+			"is_active":                       stillActive,
+			"auto_purchase_deferred_until":    nil,
+			"auto_purchase_attempts":          0,
+			"auto_purchase_last_error":        nil,
+			"auto_purchase_last_attempted_at": nil,
 		}).Error
 }
 
@@ -114,4 +117,27 @@ func (r *GormGoalRepository) SetAutoPurchaseDeferral(ctx context.Context, tx *go
 		Model(&domain.Goal{}).
 		Where("id = ?", goalID).
 		Update("auto_purchase_deferred_until", until).Error
+}
+
+func (r *GormGoalRepository) RecordAutoPurchaseFailure(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, errMsg string, attemptedAt time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&domain.Goal{}).
+		Where("id = ?", goalID).
+		Updates(map[string]interface{}{
+			"auto_purchase_attempts":          gorm.Expr("auto_purchase_attempts + 1"),
+			"auto_purchase_last_error":        errMsg,
+			"auto_purchase_last_attempted_at": attemptedAt,
+		}).Error
+}
+
+func (r *GormGoalRepository) ListStuckGoals(ctx context.Context) ([]domain.Goal, error) {
+	var goals []domain.Goal
+	err := r.db.WithContext(ctx).
+		Where("is_active AND auto_purchase_attempts > 0").
+		Order("auto_purchase_attempts DESC, goal_reached_at ASC").
+		Find(&goals).Error
+	if err != nil {
+		return nil, err
+	}
+	return goals, nil
 }

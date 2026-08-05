@@ -45,6 +45,39 @@
     </table>
   </section>
 
+  <!-- Read-only observability: goals the worker has failed to auto-
+       purchase at least once since its last success. No action here -
+       the worker keeps retrying on its own; this panel just makes that
+       visible instead of only living in worker log lines. -->
+  <section>
+    <h2>เป้าหมายกระปุกที่ซื้อสลากอัตโนมัติล่าช้า</h2>
+    <p>
+      รายการเป้าหมายกระปุกที่ระบบพยายามซื้อสลากให้อัตโนมัติแล้วแต่ยังไม่สำเร็จ
+      ระบบจะพยายามซื้อให้ใหม่ทุกรอบโดยอัตโนมัติ หน้านี้แสดงไว้เพื่อการติดตามเท่านั้น
+    </p>
+
+    <button type="button" id="stuck-goals-refresh-button" data-testid="stuck-goals-refresh-button">
+      โหลดข้อมูลใหม่
+    </button>
+
+    <p id="stuck-goals-message" class="hidden" data-testid="stuck-goals-message"></p>
+    <p id="stuck-goals-empty" class="hidden" data-testid="stuck-goals-empty">ไม่มีเป้าหมายที่ค้างอยู่</p>
+
+    <table id="stuck-goals-table" class="hidden" data-testid="stuck-goals-table">
+      <thead>
+        <tr>
+          <th>รหัสเป้าหมาย</th>
+          <th>รหัสบัญชี</th>
+          <th>จำนวนครั้งที่ล้มเหลว</th>
+          <th>ข้อผิดพลาดล่าสุด</th>
+          <th>ลองล่าสุดเมื่อ</th>
+          <th>ถึงเป้าหมายเมื่อ</th>
+        </tr>
+      </thead>
+      <tbody id="stuck-goals-tbody"></tbody>
+    </table>
+  </section>
+
   <script src="api.js"></script>
   <script>
     requireAdminAuth();
@@ -77,6 +110,44 @@
         showMessage(message, messageForError(err));
       }
     });
+
+    const stuckMessage = document.getElementById("stuck-goals-message");
+    const stuckEmpty = document.getElementById("stuck-goals-empty");
+    const stuckTable = document.getElementById("stuck-goals-table");
+    const stuckTbody = document.getElementById("stuck-goals-tbody");
+
+    async function loadStuckGoals() {
+      clearMessage(stuckMessage);
+      stuckEmpty.classList.add("hidden");
+      stuckTable.classList.add("hidden");
+      try {
+        const goals = await listStuckKapookGoals();
+        if (goals.length === 0) {
+          stuckEmpty.classList.remove("hidden");
+          return;
+        }
+        stuckTbody.innerHTML = "";
+        for (const g of goals) {
+          const row = document.createElement("tr");
+          row.dataset.testid = "stuck-goal-row";
+          row.innerHTML = `
+            <td>${g.goal_id}</td>
+            <td>${g.account_id}</td>
+            <td>${g.attempts}</td>
+            <td>${g.last_error || ""}</td>
+            <td>${g.last_attempted_at || ""}</td>
+            <td>${g.goal_reached_at || ""}</td>
+          `;
+          stuckTbody.appendChild(row);
+        }
+        stuckTable.classList.remove("hidden");
+      } catch (err) {
+        showMessage(stuckMessage, messageForError(err));
+      }
+    }
+
+    document.getElementById("stuck-goals-refresh-button").addEventListener("click", loadStuckGoals);
+    loadStuckGoals();
   </script>
 </body>
 </html>

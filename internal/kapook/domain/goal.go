@@ -30,8 +30,17 @@ type Goal struct {
 	// succeeds (UpdateAfterPurchase). Not a sixth transaction type; a plain
 	// nullable column on the goal itself.
 	AutoPurchaseDeferredUntil *time.Time
-	CreatedAt                 time.Time
-	UpdatedAt                 time.Time
+	// AutoPurchaseAttempts/AutoPurchaseLastError/AutoPurchaseLastAttemptedAt
+	// track the *current* unresolved auto-purchase failure streak - all
+	// three reset to zero/nil the moment a purchase succeeds
+	// (UpdateAfterPurchase), so they never accumulate across a goal's whole
+	// history, only describe "how long has the worker been failing on this
+	// goal right now".
+	AutoPurchaseAttempts        int
+	AutoPurchaseLastError       *string
+	AutoPurchaseLastAttemptedAt *time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 func (Goal) TableName() string {

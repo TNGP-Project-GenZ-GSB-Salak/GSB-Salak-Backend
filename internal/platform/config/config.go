@@ -1,12 +1,14 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/shopspring/decimal"
 )
 
@@ -60,6 +62,12 @@ type Config struct {
 	// a 20-30 minute presentation, and the worker's real code path runs
 	// unchanged either way.
 	KapookCountdownDuration time.Duration
+	// KapookWorkerTickInterval is how often cmd/worker polls for due goals -
+	// a config knob for the same reason KapookCountdownDuration is one: a
+	// demo/test run with a short countdown wants a short tick too, or the
+	// spinner can sit "stuck-looking" for up to a full tick after the
+	// countdown legitimately expires. Defaults to the real 1-minute cadence.
+	KapookWorkerTickInterval time.Duration
 	// RegistrationSavingsStartingBalance funds a new user's savings account
 	// at registration - in the spirit of SEED_DEMO_DATA/
 	// KAPOOK_COUNTDOWN_DURATION, a demo/test knob tuned without a code
@@ -70,7 +78,23 @@ type Config struct {
 	RegistrationSavingsStartingBalance decimal.Decimal
 }
 
+// loadDotenv loads .env from the current working directory into the process
+// environment, for whichever key it doesn't already have a real value for -
+// godotenv.Load never overrides an already-set OS env var, so a real
+// deployment's actual environment always wins over a stray .env file. A
+// missing file is expected and silent (every cmd/* works with zero env vars
+// set, per this package's own local-defaults philosophy); a malformed one
+// is logged but not fatal, since the OS environment and this file's
+// defaults can still carry the process.
+func loadDotenv() {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("WARNING: failed to load .env: %v", err)
+	}
+}
+
 func Load() Config {
+	loadDotenv()
+
 	startingBalance, _ := decimal.NewFromString("1000000.00")
 
 	cfg := Config{
@@ -91,6 +115,7 @@ func Load() Config {
 		AdminUsername:                      getEnv("ADMIN_USERNAME", ""),
 		AdminPassword:                      getEnv("ADMIN_PASSWORD", ""),
 		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
+		KapookWorkerTickInterval:           getEnvDuration("KAPOOK_WORKER_TICK_INTERVAL", time.Minute),
 		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", startingBalance),
 	}
 

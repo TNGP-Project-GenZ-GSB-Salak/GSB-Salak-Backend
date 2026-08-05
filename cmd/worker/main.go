@@ -5,7 +5,6 @@ import (
 	"log"
 	"os/signal"
 	"syscall"
-	"time"
 
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
 	accountsvc "github.com/ciaabcdefg/gsb-salak-backend/internal/account/service"
@@ -22,11 +21,6 @@ import (
 	transactionrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
 	transactionsvc "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/service"
 )
-
-// tickInterval is how often the worker polls for due goals - a fixed part
-// of the design (see the worker package doc), not a config knob. Only the
-// countdown's own length is configurable, via KAPOOK_COUNTDOWN_DURATION.
-const tickInterval = time.Minute
 
 func main() {
 	cfg := config.Load()
@@ -56,11 +50,11 @@ func main() {
 
 	w := worker.New(gdb, goalRepository, accountService, kapookService, salakService, clk, cfg.KapookCountdownDuration)
 
-	log.Printf("kapook worker starting: countdown=%s, tick=%s", cfg.KapookCountdownDuration, tickInterval)
+	log.Printf("kapook worker starting: countdown=%s, tick=%s", cfg.KapookCountdownDuration, cfg.KapookWorkerTickInterval)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	w.Run(ctx, tickInterval)
+	w.Run(ctx, cfg.KapookWorkerTickInterval)
 
 	log.Println("kapook worker stopped")
 }

@@ -85,6 +85,13 @@ function messageForError(err, fallback = DEFAULT_FALLBACK) {
   return fallback;
 }
 
+// GET /admin/kapook/goals/stuck - read-only, no side effects. Every goal
+// the worker has failed to auto-purchase at least once since its last
+// success, most-attempts-first.
+function listStuckKapookGoals() {
+  return apiFetch("/admin/kapook/goals/stuck");
+}
+
 function showMessage(el, text) {
   el.textContent = text;
   el.classList.remove("hidden");

@@ -227,6 +227,14 @@ func (f *fakeGoalRepo) SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB,
 	return f.setDeferralErr
 }
 
+func (f *fakeGoalRepo) RecordAutoPurchaseFailure(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, errMsg string, attemptedAt time.Time) error {
+	return nil
+}
+
+func (f *fakeGoalRepo) ListStuckGoals(ctx context.Context) ([]kapookdomain.Goal, error) {
+	return nil, nil
+}
+
 // fakeAccountService is a hand-rolled implementation of account.Service.
 // byID/errByID let a test wire up two distinct accounts (e.g. Deposit's
 // kapook + savings pair); getByIDResult/getByIDErr are a simpler fallback

@@ -274,6 +274,11 @@ func (s *KapookService) Snapshot(ctx context.Context, goal domain.Goal) (kapook.
 		countdownRemaining = &remaining
 	}
 
+	var lastError string
+	if goal.AutoPurchaseLastError != nil {
+		lastError = *goal.AutoPurchaseLastError
+	}
+
 	available := goal.AvailableBalance()
 	return kapook.GoalSnapshot{
 		Goal:                      goal,
@@ -283,6 +288,8 @@ func (s *KapookService) Snapshot(ctx context.Context, goal domain.Goal) (kapook.
 		PurchasedUnits:            units,
 		PurchasedCount:            count,
 		BuyEligible:               available.GreaterThanOrEqual(product.MinPurchase),
+		AutoPurchaseAttempts:      goal.AutoPurchaseAttempts,
+		AutoPurchaseLastError:     lastError,
 	}, nil
 }
 
@@ -817,4 +824,15 @@ func (s *KapookService) SettleMaturedHolding(ctx context.Context, holdingID uuid
 		return transaction.SettlementReceipt{}, err
 	}
 	return receipt, nil
+}
+
+// ListStuckAutoPurchaseGoals delegates straight to the repository - the
+// admin panel's read path, no business logic beyond what ListStuckGoals
+// itself already scopes (active, at least one recorded failure).
+func (s *KapookService) ListStuckAutoPurchaseGoals(ctx context.Context) ([]domain.Goal, error) {
+	goals, err := s.goals.ListStuckGoals(ctx)
+	if err != nil {
+		return nil, apperror.Internal("failed to list stuck auto-purchase goals", err)
+	}
+	return goals, nil
 }

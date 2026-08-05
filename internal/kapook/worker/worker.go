@@ -152,15 +152,15 @@ func (w *Worker) processGoal(ctx context.Context, tx *gorm.DB, goal kapookdomain
 
 	kapookAcc, err := w.accounts.GetByIDUnscoped(ctx, goal.AccountID)
 	if err != nil {
-		return w.fail(out, fmt.Errorf("resolve kapook account: %w", err))
+		return w.fail(ctx, tx, out, fmt.Errorf("resolve kapook account: %w", err))
 	}
 
 	salakAccountID, ok, err := w.findSalakAccount(ctx, kapookAcc.UserID)
 	if err != nil {
-		return w.fail(out, fmt.Errorf("resolve salak account: %w", err))
+		return w.fail(ctx, tx, out, fmt.Errorf("resolve salak account: %w", err))
 	}
 	if !ok {
-		return w.fail(out, fmt.Errorf("no salak account found for user %s", kapookAcc.UserID))
+		return w.fail(ctx, tx, out, fmt.Errorf("no salak account found for user %s", kapookAcc.UserID))
 	}
 
 	amount := goal.AvailableBalance()
@@ -168,7 +168,7 @@ func (w *Worker) processGoal(ctx context.Context, tx *gorm.DB, goal kapookdomain
 		if errors.Is(err, salak.ErrDrawDay) {
 			return w.deferGoal(ctx, tx, out, goal)
 		}
-		return w.fail(out, err)
+		return w.fail(ctx, tx, out, err)
 	}
 
 	out.Outcome = OutcomePurchased
@@ -185,29 +185,35 @@ func (w *Worker) processGoal(ctx context.Context, tx *gorm.DB, goal kapookdomain
 func (w *Worker) deferGoal(ctx context.Context, tx *gorm.DB, out GoalOutcome, goal kapookdomain.Goal) GoalOutcome {
 	product, err := w.salakSvc.GetProduct(ctx, goal.ProductID)
 	if err != nil {
-		return w.fail(out, fmt.Errorf("resolve product for draw-day deferral: %w", err))
+		return w.fail(ctx, tx, out, fmt.Errorf("resolve product for draw-day deferral: %w", err))
 	}
 	until, err := w.salakSvc.NextAvailableDate(ctx, product)
 	if err != nil {
-		return w.fail(out, fmt.Errorf("compute next available date: %w", err))
+		return w.fail(ctx, tx, out, fmt.Errorf("compute next available date: %w", err))
 	}
 	if err := w.goals.SetAutoPurchaseDeferral(ctx, tx, goal.ID, until); err != nil {
-		return w.fail(out, fmt.Errorf("persist draw-day deferral: %w", err))
+		return w.fail(ctx, tx, out, fmt.Errorf("persist draw-day deferral: %w", err))
 	}
 	out.Outcome = OutcomeDeferred
 	log.Printf("kapook worker: deferring goal %s (draw day) until %s", goal.ID, until.Format("2006-01-02"))
 	return out
 }
 
-// fail marks out as failed and logs it explicitly - the goal is left as-is
-// (still due) and gets retried next tick, but this is the record of why an
-// unattended attempt didn't complete that the ticket's acceptance criteria
-// require: never leave a goal past its deadline with nothing having
-// happened and no trace of the reason.
-func (w *Worker) fail(out GoalOutcome, err error) GoalOutcome {
+// fail marks out as failed, logs it explicitly, and persists the failure
+// via RecordAutoPurchaseFailure - the goal is left as-is (still due) and
+// gets retried next tick, but this is the record of why an unattended
+// attempt didn't complete that the ticket's acceptance criteria require:
+// never leave a goal past its deadline with nothing having happened and no
+// trace of the reason. The persist itself is best-effort: if it errors,
+// that's logged too, but the original failure (out.Err) is still what's
+// returned - a bookkeeping failure must never mask the real one.
+func (w *Worker) fail(ctx context.Context, tx *gorm.DB, out GoalOutcome, err error) GoalOutcome {
 	out.Outcome = OutcomeFailed
 	out.Err = err
 	log.Printf("ERROR: kapook worker: auto-purchase failed for goal %s (account %s): %v", out.GoalID, out.AccountID, err)
+	if recordErr := w.goals.RecordAutoPurchaseFailure(ctx, tx, out.GoalID, err.Error(), w.clk.Now()); recordErr != nil {
+		log.Printf("ERROR: kapook worker: failed to record auto-purchase failure for goal %s: %v", out.GoalID, recordErr)
+	}
 	return out
 }
 

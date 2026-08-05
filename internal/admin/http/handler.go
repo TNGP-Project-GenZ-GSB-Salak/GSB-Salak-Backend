@@ -33,6 +33,7 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 // in middleware.AdminAuth.
 func (h *Handler) RegisterAdminRoutes(r chi.Router) {
 	r.Post("/admin/holdings/{id}/settle", h.SettleHolding)
+	r.Get("/admin/kapook/goals/stuck", h.ListStuckKapookGoals)
 }
 
 // Login godoc
@@ -83,4 +84,20 @@ func (h *Handler) SettleHolding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.OK(w, http.StatusOK, toSettlementResponse(receipt))
+}
+
+// ListStuckKapookGoals godoc
+// @Summary      List stuck Kapook auto-purchase goals
+// @Description  Every active goal the worker has failed to auto-purchase at least once since its last success - observability only, no side effects.
+// @Tags         admin
+// @Produce      json
+// @Success      200 {object} httpserver.DataEnvelope{data=[]stuckGoalResponse}
+// @Router       /api/v1/admin/kapook/goals/stuck [get]
+func (h *Handler) ListStuckKapookGoals(w http.ResponseWriter, r *http.Request) {
+	goals, err := h.kapook.ListStuckAutoPurchaseGoals(r.Context())
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toStuckGoalResponses(goals))
 }

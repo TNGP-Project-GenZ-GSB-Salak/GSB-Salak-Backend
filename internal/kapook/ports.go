@@ -48,7 +48,9 @@ type GoalRepository interface {
 	// only once a purchase fully satisfies GoalAmount), and
 	// AutoPurchaseDeferredUntil is cleared unconditionally - a purchase
 	// succeeding, whether the customer's or a retried worker attempt, is
-	// exactly what a deferral was waiting on.
+	// exactly what a deferral was waiting on. Also resets
+	// AutoPurchaseAttempts/AutoPurchaseLastError/AutoPurchaseLastAttemptedAt
+	// to zero/nil - a success clears any prior failure streak.
 	UpdateAfterPurchase(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, newSalakAmount decimal.Decimal, stillActive bool) error
 	// UpdateAfterWithdrawal is Withdraw's write path: SavingAmount shrinks to
 	// newSavingAmount, and IsActive is set to stillActive - false only for
@@ -74,6 +76,16 @@ type GoalRepository interface {
 	// rejection. Re-setting the same date on a later tick (the goal is
 	// still due, still blocked) is a harmless no-op update, not an error.
 	SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error
+	// RecordAutoPurchaseFailure increments AutoPurchaseAttempts and stamps
+	// AutoPurchaseLastError/AutoPurchaseLastAttemptedAt - the worker's
+	// response to any auto-purchase attempt that didn't succeed and wasn't
+	// a draw-day deferral either. The goal is left otherwise untouched
+	// (still due, still active) and gets reclaimed and retried next tick.
+	RecordAutoPurchaseFailure(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, errMsg string, attemptedAt time.Time) error
+	// ListStuckGoals returns every active goal with at least one recorded
+	// auto-purchase failure it hasn't yet recovered from - the admin
+	// observability panel's read path. Ordered most-attempts-first.
+	ListStuckGoals(ctx context.Context) ([]domain.Goal, error)
 	// UpdateAfterExpiration is the settlement wrapper's write path when a
 	// matured holding traces back to a goal: SalakAmount shrinks to
 	// newSalakAmount only - unlike UpdateAfterPurchase, IsActive and
@@ -193,6 +205,12 @@ type GoalSnapshot struct {
 	// BuyEligible mirrors the same rule BuyFromGoal enforces on submit:
 	// AvailableBalance at least the product's MinPurchase.
 	BuyEligible bool
+	// AutoPurchaseAttempts/AutoPurchaseLastError mirror the goal's own
+	// current failure streak (see domain.Goal) - zero/empty means either no
+	// countdown is live yet, or the worker hasn't failed on this goal since
+	// its last successful purchase.
+	AutoPurchaseAttempts  int
+	AutoPurchaseLastError string
 }
 
 // HistoryEntry is one row of a goal's history, with Fee/Net derived
@@ -285,4 +303,8 @@ type Service interface {
 	// salak_expiration row, all inside one transaction. transaction.Service
 	// itself is never given a reason to know kapook exists.
 	SettleMaturedHolding(ctx context.Context, holdingID uuid.UUID) (transaction.SettlementReceipt, error)
+	// ListStuckAutoPurchaseGoals is the admin observability panel's read
+	// path - every active goal the worker has failed to auto-purchase at
+	// least once since its last success, most-attempts-first.
+	ListStuckAutoPurchaseGoals(ctx context.Context) ([]domain.Goal, error)
 }

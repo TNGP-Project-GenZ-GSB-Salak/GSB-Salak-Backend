@@ -34,11 +34,19 @@ type fakeGoalRepo struct {
 
 	setDeferralErr error
 	deferralCalls  []deferralCall
+
+	recordFailureErr   error
+	recordFailureCalls []recordFailureCall
 }
 
 type deferralCall struct {
 	GoalID uuid.UUID
 	Until  time.Time
+}
+
+type recordFailureCall struct {
+	GoalID uuid.UUID
+	ErrMsg string
 }
 
 func (f *fakeGoalRepo) Create(ctx context.Context, g *kapookdomain.Goal) error { return nil }
@@ -75,6 +83,13 @@ func (f *fakeGoalRepo) ClaimDueGoals(ctx context.Context, tx *gorm.DB, cutoff, t
 func (f *fakeGoalRepo) SetAutoPurchaseDeferral(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, until time.Time) error {
 	f.deferralCalls = append(f.deferralCalls, deferralCall{GoalID: goalID, Until: until})
 	return f.setDeferralErr
+}
+func (f *fakeGoalRepo) RecordAutoPurchaseFailure(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, errMsg string, attemptedAt time.Time) error {
+	f.recordFailureCalls = append(f.recordFailureCalls, recordFailureCall{GoalID: goalID, ErrMsg: errMsg})
+	return f.recordFailureErr
+}
+func (f *fakeGoalRepo) ListStuckGoals(ctx context.Context) ([]kapookdomain.Goal, error) {
+	return nil, nil
 }
 
 // fakeAccountService implements account.Service; the worker only calls
@@ -176,6 +191,9 @@ func (f *fakeKapookService) BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, us
 		return kapook.BuyFromGoalResult{}, f.buyErr
 	}
 	return f.buyResult, nil
+}
+func (f *fakeKapookService) ListStuckAutoPurchaseGoals(ctx context.Context) ([]kapookdomain.Goal, error) {
+	return nil, nil
 }
 
 // fakeSalakService implements salak.Service; the worker only calls

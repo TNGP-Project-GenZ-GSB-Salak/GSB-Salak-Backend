@@ -49,6 +49,11 @@ type goalResponse struct {
 	PurchasedUnits            int64           `json:"purchased_units"`
 	PurchasedCount            int             `json:"purchased_count"`
 	BuyEligible               bool            `json:"buy_eligible"`
+	// AutoPurchaseAttempts/AutoPurchaseLastError are omitted at zero/empty -
+	// present only once the worker has actually failed on this goal since
+	// its last successful purchase. See KapookService.Snapshot.
+	AutoPurchaseAttempts  int    `json:"auto_purchase_attempts,omitempty"`
+	AutoPurchaseLastError string `json:"auto_purchase_last_error,omitempty"`
 }
 
 func toGoalResponse(snap kapook.GoalSnapshot) goalResponse {
@@ -70,6 +75,8 @@ func toGoalResponse(snap kapook.GoalSnapshot) goalResponse {
 		PurchasedUnits:            snap.PurchasedUnits,
 		PurchasedCount:            snap.PurchasedCount,
 		BuyEligible:               snap.BuyEligible,
+		AutoPurchaseAttempts:      snap.AutoPurchaseAttempts,
+		AutoPurchaseLastError:     snap.AutoPurchaseLastError,
 	}
 }
 
