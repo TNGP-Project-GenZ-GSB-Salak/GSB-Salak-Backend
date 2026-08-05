@@ -114,7 +114,7 @@ func Load() Config {
 		AdminJWTSecret:                     getEnv("ADMIN_JWT_SECRET", ""),
 		AdminUsername:                      getEnv("ADMIN_USERNAME", ""),
 		AdminPassword:                      getEnv("ADMIN_PASSWORD", ""),
-		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 24*time.Hour),
+		KapookCountdownDuration:            getEnvDuration("KAPOOK_COUNTDOWN_DURATION", 30*time.Second),
 		KapookWorkerTickInterval:           getEnvDuration("KAPOOK_WORKER_TICK_INTERVAL", time.Minute),
 		RegistrationSavingsStartingBalance: getEnvDecimal("REGISTRATION_SAVINGS_STARTING_BALANCE", startingBalance),
 	}
