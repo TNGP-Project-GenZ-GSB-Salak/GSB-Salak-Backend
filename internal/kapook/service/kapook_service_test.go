@@ -8,6 +8,7 @@ import (
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
+	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook"
 	kapookdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/service"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
@@ -389,6 +390,14 @@ func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {
 	assert.Equal(t, kind, appErr.Kind)
 }
 
+func assertAppErrCode(t *testing.T, err error, code string) {
+	t.Helper()
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, code, appErr.Code)
+}
+
 func kapookAccount(id uuid.UUID, userID uuid.UUID) accountdomain.Account {
 	return accountdomain.Account{ID: id, UserID: userID, Type: accountdomain.TypeKapook}
 }
@@ -568,6 +577,7 @@ func TestKapookService_CreateGoal(t *testing.T) {
 
 		_, err := svc.CreateGoal(context.Background(), userID, accountID, productID, decimal.RequireFromString("10000"))
 		assertAppErrKind(t, err, apperror.KindForbidden)
+		assertAppErrCode(t, err, kapook.CodeTermsNotAccepted)
 	})
 
 	t.Run("terms check repo error returns internal error", func(t *testing.T) {
@@ -588,6 +598,7 @@ func TestKapookService_CreateGoal(t *testing.T) {
 
 		_, err := svc.CreateGoal(context.Background(), userID, accountID, productID, decimal.RequireFromString("10000"))
 		assertAppErrKind(t, err, apperror.KindConflict)
+		assertAppErrCode(t, err, kapook.CodeGoalAlreadyExists)
 	})
 
 	t.Run("active-goal lookup error (other than not-found) returns internal error", func(t *testing.T) {
@@ -647,6 +658,7 @@ func TestKapookService_CreateGoal(t *testing.T) {
 
 		_, err := svc.CreateGoal(context.Background(), userID, accountID, productID, decimal.RequireFromString("10000"))
 		assertAppErrKind(t, err, apperror.KindConflict)
+		assertAppErrCode(t, err, kapook.CodeGoalAlreadyExists)
 	})
 }
 
@@ -825,6 +837,7 @@ func TestKapookService_Deposit(t *testing.T) {
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.Zero)
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeAmountMustBePositive)
 	})
 
 	t.Run("negative amount is rejected", func(t *testing.T) {
@@ -837,6 +850,7 @@ func TestKapookService_Deposit(t *testing.T) {
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("-500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeAmountMustBePositive)
 	})
 
 	t.Run("no active goal returns not found", func(t *testing.T) {
@@ -878,6 +892,7 @@ func TestKapookService_Deposit(t *testing.T) {
 
 		_, err := svc.Deposit(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("300"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeDepositExceedsTarget)
 		assert.Empty(t, accounts.debitCalls, "must reject before debiting anything")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1194,6 +1209,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.Zero)
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeAmountMustBePositive)
 	})
 
 	t.Run("no active goal returns not found", func(t *testing.T) {
@@ -1232,6 +1248,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("301"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeWithdrawalExceedsBalance)
 		assert.Empty(t, accounts.debitCalls, "must reject before debiting anything")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1306,6 +1323,7 @@ func TestKapookService_Withdraw(t *testing.T) {
 
 		_, err := svc.Withdraw(context.Background(), userID, kapookAccID, savingsAccID, decimal.RequireFromString("200"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeWithdrawalMustBeFullDuringCountdown)
 		assert.Empty(t, accounts.debitCalls, "must reject before debiting anything")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1593,6 +1611,7 @@ func TestKapookService_BuyFromGoal(t *testing.T) {
 
 		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.Zero)
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeAmountMustBePositive)
 	})
 
 	t.Run("no active goal returns not found", func(t *testing.T) {
@@ -1634,6 +1653,7 @@ func TestKapookService_BuyFromGoal(t *testing.T) {
 
 		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("500"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeBalanceBelowMinimumPurchase)
 		assert.Equal(t, 0, buySalakSvc.callCount)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -1683,6 +1703,7 @@ func TestKapookService_BuyFromGoal(t *testing.T) {
 
 		_, err := svc.BuyFromGoal(context.Background(), userID, kapookAccID, salakAccID, decimal.RequireFromString("2000"))
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, kapook.CodeBuyAmountExceedsBalance)
 		assert.Equal(t, 0, buySalakSvc.callCount)
 		require.NoError(t, mock.ExpectationsWereMet())
 	})

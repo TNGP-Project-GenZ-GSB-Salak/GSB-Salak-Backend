@@ -92,7 +92,7 @@ func (s *SalakService) ValidatePurchase(product domain.Product, amount decimal.D
 		return apperror.Validation("amount exceeds the maximum purchase amount")
 	}
 	if !amount.Mod(product.StepAmount).IsZero() {
-		return apperror.Validation("amount must be a multiple of the step amount")
+		return apperror.Validation("amount must be a multiple of the step amount").WithCode(salak.CodeAmountNotStepMultiple)
 	}
 	return nil
 }
@@ -108,7 +108,7 @@ func (s *SalakService) EnsureNotDrawDay(ctx context.Context, product domain.Prod
 		return apperror.Internal("failed to check draw-day calendar", err)
 	}
 	if isDrawDay {
-		return apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day - try again after the draw day passes", salak.ErrDrawDay)
+		return apperror.Wrap(apperror.KindValidation, "salak cannot be purchased on its draw day - try again after the draw day passes", salak.ErrDrawDay).WithCode(salak.CodeDrawDayPurchaseBlocked)
 	}
 	return nil
 }

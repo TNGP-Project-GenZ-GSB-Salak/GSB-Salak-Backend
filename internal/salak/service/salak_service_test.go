@@ -192,6 +192,14 @@ func assertAppErrKind(t *testing.T, err error, kind apperror.Kind) {
 	assert.Equal(t, kind, appErr.Kind)
 }
 
+func assertAppErrCode(t *testing.T, err error, code string) {
+	t.Helper()
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, code, appErr.Code)
+}
+
 func mustDecimal(t *testing.T, s string) decimal.Decimal {
 	t.Helper()
 	d, err := decimal.NewFromString(s)
@@ -310,6 +318,17 @@ func TestSalakService_ValidatePurchase(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("not a multiple of step is coded, for the Kapook screens that surface it", func(t *testing.T) {
+		err := svc.ValidatePurchase(product, mustDecimal(t, "150"))
+		assertAppErrCode(t, err, salak.CodeAmountNotStepMultiple)
+	})
+
+	t.Run("other validation failures carry no code, falling back to a generic Kind message", func(t *testing.T) {
+		assertAppErrCode(t, svc.ValidatePurchase(product, decimal.Zero), "")
+		assertAppErrCode(t, svc.ValidatePurchase(product, mustDecimal(t, "50")), "")
+		assertAppErrCode(t, svc.ValidatePurchase(product, mustDecimal(t, "1000001")), "")
+	})
 }
 
 // --- EnsureNotDrawDay --------------------------------------------------------
@@ -334,6 +353,7 @@ func TestSalakService_EnsureNotDrawDay(t *testing.T) {
 
 		err := svc.EnsureNotDrawDay(context.Background(), product)
 		assertAppErrKind(t, err, apperror.KindValidation)
+		assertAppErrCode(t, err, salak.CodeDrawDayPurchaseBlocked)
 		assert.True(t, errors.Is(err, salak.ErrDrawDay), "expected errors.Is(err, salak.ErrDrawDay), got: %v", err)
 	})
 

@@ -15,6 +15,7 @@ const (
 
 type Error struct {
 	Kind    Kind
+	Code    string
 	Message string
 	Err     error
 }
@@ -28,6 +29,16 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error {
 	return e.Err
+}
+
+// WithCode attaches a stable, machine-readable code for the client to map to
+// localized copy, and returns the receiver for chaining at the call site
+// (e.g. apperror.Conflict("...").WithCode("goal_already_exists")). Left
+// unset (the zero value), a caller falls back to a generic per-Kind message
+// - the intended outcome for the errors a customer cannot trigger.
+func (e *Error) WithCode(code string) *Error {
+	e.Code = code
+	return e
 }
 
 func New(kind Kind, message string) *Error {

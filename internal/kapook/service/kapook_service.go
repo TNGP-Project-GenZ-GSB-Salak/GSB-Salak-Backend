@@ -167,12 +167,12 @@ func (s *KapookService) CreateGoal(ctx context.Context, userID, accountID, produ
 		return domain.Goal{}, apperror.Internal("failed to check terms acceptance", err)
 	}
 	if !accepted {
-		return domain.Goal{}, apperror.Forbidden("you must accept the Kapook terms and conditions before creating a goal")
+		return domain.Goal{}, apperror.Forbidden("you must accept the Kapook terms and conditions before creating a goal").WithCode(kapook.CodeTermsNotAccepted)
 	}
 
 	_, err = s.goals.FindActiveByAccountID(ctx, accountID)
 	if err == nil {
-		return domain.Goal{}, apperror.Conflict("an active goal already exists for this account")
+		return domain.Goal{}, apperror.Conflict("an active goal already exists for this account").WithCode(kapook.CodeGoalAlreadyExists)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return domain.Goal{}, apperror.Internal("failed to check for an existing active goal", err)
@@ -202,7 +202,7 @@ func (s *KapookService) CreateGoal(ctx context.Context, userID, accountID, produ
 		// authority, so a violation here means the same "already exists"
 		// conflict, not a server fault.
 		if isUniqueViolation(err) {
-			return domain.Goal{}, apperror.Conflict("an active goal already exists for this account")
+			return domain.Goal{}, apperror.Conflict("an active goal already exists for this account").WithCode(kapook.CodeGoalAlreadyExists)
 		}
 		return domain.Goal{}, apperror.Internal("failed to create goal", err)
 	}
@@ -247,7 +247,7 @@ func (s *KapookService) Deposit(ctx context.Context, userID, kapookAccountID, sa
 	}
 
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return domain.Goal{}, apperror.Validation("amount must be greater than zero")
+		return domain.Goal{}, apperror.Validation("amount must be greater than zero").WithCode(kapook.CodeAmountMustBePositive)
 	}
 
 	var updatedGoal domain.Goal
@@ -265,7 +265,7 @@ func (s *KapookService) Deposit(ctx context.Context, userID, kapookAccountID, sa
 
 		newSavingAmount := goal.SavingAmount.Add(amount)
 		if newSavingAmount.GreaterThan(goal.GoalAmount) {
-			return apperror.Validation("deposit would exceed the goal's target amount")
+			return apperror.Validation("deposit would exceed the goal's target amount").WithCode(kapook.CodeDepositExceedsTarget)
 		}
 
 		// Lock order is money-flow-independent: the kapook account is always
@@ -413,7 +413,7 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 	}
 
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return kapook.WithdrawResult{}, apperror.Validation("amount must be greater than zero")
+		return kapook.WithdrawResult{}, apperror.Validation("amount must be greater than zero").WithCode(kapook.CodeAmountMustBePositive)
 	}
 
 	var result kapook.WithdrawResult
@@ -428,7 +428,7 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 
 		available := goal.AvailableBalance()
 		if amount.GreaterThan(available) {
-			return apperror.Validation("withdrawal amount exceeds the kapook balance")
+			return apperror.Validation("withdrawal amount exceeds the kapook balance").WithCode(kapook.CodeWithdrawalExceedsBalance)
 		}
 
 		// Once the target is reached and the countdown is live, withdrawal
@@ -439,7 +439,7 @@ func (s *KapookService) Withdraw(ctx context.Context, userID, kapookAccountID, s
 		closesGoal := false
 		if goal.GoalReachedAt != nil {
 			if amount.LessThan(available) {
-				return apperror.Validation("once the goal has reached its target, only a full withdrawal of the entire balance is allowed during the countdown")
+				return apperror.Validation("once the goal has reached its target, only a full withdrawal of the entire balance is allowed during the countdown").WithCode(kapook.CodeWithdrawalMustBeFullDuringCountdown)
 			}
 			closesGoal = true
 		}
@@ -591,7 +591,7 @@ func (s *KapookService) validateBuyFromGoalAccounts(ctx context.Context, userID,
 	}
 
 	if amount.LessThanOrEqual(decimal.Zero) {
-		return apperror.Validation("amount must be greater than zero")
+		return apperror.Validation("amount must be greater than zero").WithCode(kapook.CodeAmountMustBePositive)
 	}
 	return nil
 }
@@ -614,13 +614,13 @@ func (s *KapookService) buyFromGoalCore(ctx context.Context, tx *gorm.DB, userID
 
 	available := goal.AvailableBalance()
 	if available.LessThan(product.MinPurchase) {
-		return kapook.BuyFromGoalResult{}, apperror.Validation("kapook balance must be at least the product's minimum purchase amount to buy Salak")
+		return kapook.BuyFromGoalResult{}, apperror.Validation("kapook balance must be at least the product's minimum purchase amount to buy Salak").WithCode(kapook.CodeBalanceBelowMinimumPurchase)
 	}
 	if err := s.salakSvc.ValidatePurchase(product, amount); err != nil {
 		return kapook.BuyFromGoalResult{}, err
 	}
 	if amount.GreaterThan(available) {
-		return kapook.BuyFromGoalResult{}, apperror.Validation("amount exceeds the kapook balance")
+		return kapook.BuyFromGoalResult{}, apperror.Validation("amount exceeds the kapook balance").WithCode(kapook.CodeBuyAmountExceedsBalance)
 	}
 
 	receipt, err := s.buySalakSvc.BuySalakForKapook(ctx, tx, userID, kapookAccountID, salakAccountID, goal.ProductID, amount)

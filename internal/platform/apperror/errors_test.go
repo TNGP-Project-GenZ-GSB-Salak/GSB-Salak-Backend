@@ -70,6 +70,20 @@ func TestConstructors(t *testing.T) {
 	}
 }
 
+func TestError_WithCode(t *testing.T) {
+	t.Run("sets Code and returns the same error for chaining", func(t *testing.T) {
+		e := apperror.Validation("amount must be greater than zero")
+		got := e.WithCode("kapook_amount_must_be_positive")
+		assert.Same(t, e, got)
+		assert.Equal(t, "kapook_amount_must_be_positive", e.Code)
+	})
+
+	t.Run("zero value when never called", func(t *testing.T) {
+		e := apperror.Validation("bad input")
+		assert.Empty(t, e.Code)
+	})
+}
+
 func TestHTTPStatus(t *testing.T) {
 	cases := []struct {
 		name string
