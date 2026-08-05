@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"testing"
+	"time"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
 	accountrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/account/repository"
@@ -47,7 +48,7 @@ func newKapookService(tx *gorm.DB) (*kapookservice.KapookService, *kapookrepo.Go
 	transactionRepo := kapookrepo.NewGormTransactionRepository(tx)
 	badgeSvc := badgeservice.NewBadgeService(badgerepo.NewGormBadgeRepository(tx))
 	buySalakSvc := txservice.NewBuySalakService(tx, accountSvc, salakSvc, ledgerRepo, badgeSvc, clock.Real{})
-	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc), termsRepo
+	return kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, tx, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc, 24*time.Hour), termsRepo
 }
 
 func TestKapookGoalFlow_HappyPath_CreatesAndReadsBackActiveGoal(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook"
-	"github.com/ciaabcdefg/gsb-salak-backend/internal/kapook/domain"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 )
@@ -35,19 +34,36 @@ type goalResponse struct {
 	IsActive      bool            `json:"is_active"`
 	GoalReachedAt *time.Time      `json:"goal_reached_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// The read model's six derived fields (kapook.GoalSnapshot) - see
+	// .scratch/mvp1-frontend-integration-build/issues/05-*.md. AvailableBalance
+	// is what a withdrawal or purchase can draw on - NOT SavingAmount, which
+	// is cumulative net contribution and never shrinks on a purchase.
+	AvailableBalance          decimal.Decimal `json:"available_balance"`
+	TargetReached             bool            `json:"target_reached"`
+	CountdownRemainingSeconds *int            `json:"countdown_remaining_seconds,omitempty"`
+	PurchasedUnits            int64           `json:"purchased_units"`
+	PurchasedCount            int             `json:"purchased_count"`
+	BuyEligible               bool            `json:"buy_eligible"`
 }
 
-func toGoalResponse(g domain.Goal) goalResponse {
+func toGoalResponse(snap kapook.GoalSnapshot) goalResponse {
+	g := snap.Goal
 	return goalResponse{
-		ID:            g.ID,
-		AccountID:     g.AccountID,
-		ProductID:     g.ProductID,
-		GoalAmount:    g.GoalAmount,
-		SavingAmount:  g.SavingAmount,
-		SalakAmount:   g.SalakAmount,
-		IsActive:      g.IsActive,
-		GoalReachedAt: g.GoalReachedAt,
-		CreatedAt:     g.CreatedAt,
+		ID:                        g.ID,
+		AccountID:                 g.AccountID,
+		ProductID:                 g.ProductID,
+		GoalAmount:                g.GoalAmount,
+		SavingAmount:              g.SavingAmount,
+		SalakAmount:               g.SalakAmount,
+		IsActive:                  g.IsActive,
+		GoalReachedAt:             g.GoalReachedAt,
+		CreatedAt:                 g.CreatedAt,
+		AvailableBalance:          snap.AvailableBalance,
+		TargetReached:             snap.TargetReached,
+		CountdownRemainingSeconds: snap.CountdownRemainingSeconds,
+		PurchasedUnits:            snap.PurchasedUnits,
+		PurchasedCount:            snap.PurchasedCount,
+		BuyEligible:               snap.BuyEligible,
 	}
 }
 
@@ -65,9 +81,9 @@ type withdrawResponse struct {
 	NetCredited decimal.Decimal `json:"net_credited"`
 }
 
-func toWithdrawResponse(r kapook.WithdrawResult) withdrawResponse {
+func toWithdrawResponse(r kapook.WithdrawResult, snap kapook.GoalSnapshot) withdrawResponse {
 	return withdrawResponse{
-		Goal:        toGoalResponse(r.Goal),
+		Goal:        toGoalResponse(snap),
 		Amount:      r.Amount,
 		FeeCharged:  r.FeeCharged,
 		FeeAmount:   r.FeeAmount,
@@ -112,10 +128,10 @@ type buyFromGoalResponse struct {
 	MaturityDate  string          `json:"maturity_date"`
 }
 
-func toBuyFromGoalResponse(r kapook.BuyFromGoalResult) buyFromGoalResponse {
+func toBuyFromGoalResponse(r kapook.BuyFromGoalResult, snap kapook.GoalSnapshot) buyFromGoalResponse {
 	receipt := r.Receipt
 	return buyFromGoalResponse{
-		Goal:          toGoalResponse(r.Goal),
+		Goal:          toGoalResponse(snap),
 		GoalCompleted: r.GoalCompleted,
 		ReferenceID:   receipt.ReferenceID,
 		ProductName:   receipt.ProductName,

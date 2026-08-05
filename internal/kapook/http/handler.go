@@ -103,11 +103,17 @@ func (h *Handler) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(w, http.StatusCreated, toGoalResponse(goal))
+	snap, err := h.service.Snapshot(r.Context(), goal)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusCreated, toGoalResponse(snap))
 }
 
 // GetActiveGoal godoc
 // @Summary      Get the active Kapook goal for an account
+// @Description  Returns a null data payload (still 200) when accountID has no active goal - a normal empty state, not an error. 404 stays reserved for ownership failures.
 // @Tags         kapook
 // @Produce      json
 // @Security     BearerAuth
@@ -134,7 +140,16 @@ func (h *Handler) GetActiveGoal(w http.ResponseWriter, r *http.Request) {
 		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(w, http.StatusOK, toGoalResponse(goal))
+	if goal == nil {
+		httpserver.OK(w, http.StatusOK, nil)
+		return
+	}
+	snap, err := h.service.Snapshot(r.Context(), *goal)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toGoalResponse(snap))
 }
 
 // Deposit godoc
@@ -167,7 +182,12 @@ func (h *Handler) Deposit(w http.ResponseWriter, r *http.Request) {
 		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(w, http.StatusOK, toGoalResponse(goal))
+	snap, err := h.service.Snapshot(r.Context(), goal)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toGoalResponse(snap))
 }
 
 // Withdraw godoc
@@ -200,7 +220,12 @@ func (h *Handler) Withdraw(w http.ResponseWriter, r *http.Request) {
 		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(w, http.StatusOK, toWithdrawResponse(result))
+	snap, err := h.service.Snapshot(r.Context(), result.Goal)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusOK, toWithdrawResponse(result, snap))
 }
 
 // GetWithdrawalStatus godoc
@@ -265,5 +290,10 @@ func (h *Handler) BuyFromGoal(w http.ResponseWriter, r *http.Request) {
 		httpserver.Fail(w, r, err)
 		return
 	}
-	httpserver.OK(w, http.StatusCreated, toBuyFromGoalResponse(result))
+	snap, err := h.service.Snapshot(r.Context(), result.Goal)
+	if err != nil {
+		httpserver.Fail(w, r, err)
+		return
+	}
+	httpserver.OK(w, http.StatusCreated, toBuyFromGoalResponse(result, snap))
 }

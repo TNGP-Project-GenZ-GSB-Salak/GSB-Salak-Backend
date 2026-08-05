@@ -50,7 +50,7 @@ func newWorkerOn(db *gorm.DB, countdownDuration time.Duration) *worker.Worker {
 	termsRepo := kapookrepo.NewGormTermsRepository(db)
 	goalRepo := kapookrepo.NewGormGoalRepository(db)
 	transactionRepo := kapookrepo.NewGormTransactionRepository(db)
-	kapookSvc := kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, db, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc)
+	kapookSvc := kapookservice.NewKapookService(termsRepo, goalRepo, salakSvc, accountSvc, db, ledgerRepo, transactionRepo, clock.Real{}, buySalakSvc, countdownDuration)
 	return worker.New(db, goalRepo, accountSvc, kapookSvc, clock.Real{}, countdownDuration)
 }
 

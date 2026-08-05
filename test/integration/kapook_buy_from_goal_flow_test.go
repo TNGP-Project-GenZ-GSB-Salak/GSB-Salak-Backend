@@ -74,6 +74,22 @@ func TestKapookGoalFlow_BuyFromGoal_PartialPurchase_MintsHoldingAndLeavesGoalAct
 	used, err := transactionRepository.CountByGoalAndTypesInWindow(ctx, tx, goal.ID, []kapookdomain.TransactionType{kapookdomain.TransactionBuySalak}, goal.CreatedAt, goal.CreatedAt.AddDate(1, 0, 0))
 	require.NoError(t, err)
 	assert.Equal(t, 1, used)
+
+	// The units/count aggregation is a real cross-schema join
+	// (kapook_transactions -> salak.holdings via holding_id) - worth
+	// verifying against real Postgres, not just the fake repo in the unit
+	// suite.
+	units, count, err := transactionRepository.SumPurchasedUnitsAndCount(ctx, tx, goal.ID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 20, units)
+	assert.Equal(t, 1, count)
+
+	snap, err := kapookSvc.Snapshot(ctx, result.Goal)
+	require.NoError(t, err)
+	assert.EqualValues(t, 20, snap.PurchasedUnits)
+	assert.Equal(t, 1, snap.PurchasedCount)
+	assert.True(t, decimal.RequireFromString("1000").Equal(snap.AvailableBalance), "3000 saved - 2000 converted")
+	assert.False(t, snap.TargetReached, "goal amount is 5000, only 3000 saved so far")
 }
 
 func TestKapookGoalFlow_BuyFromGoal_FullPurchase_DeactivatesGoal(t *testing.T) {
@@ -99,11 +115,9 @@ func TestKapookGoalFlow_BuyFromGoal_FullPurchase_DeactivatesGoal(t *testing.T) {
 	assert.False(t, result.Goal.IsActive)
 	assert.True(t, decimal.RequireFromString("2000").Equal(result.Goal.SalakAmount))
 
-	_, err = kapookSvc.GetActiveGoal(ctx, user.ID, kapookAcc.ID)
-	require.Error(t, err, "a fully-satisfied goal is no longer active")
-	var appErr *apperror.Error
-	require.ErrorAs(t, err, &appErr)
-	assert.Equal(t, apperror.KindNotFound, appErr.Kind)
+	fetched, err := kapookSvc.GetActiveGoal(ctx, user.ID, kapookAcc.ID)
+	require.NoError(t, err, "a fully-satisfied goal is no longer active, which is the null contract, not an error")
+	assert.Nil(t, fetched)
 }
 
 // TestKapookGoalFlow_BuyFromGoal_DrawDay_RejectedWithoutChangingAnything

@@ -51,10 +51,14 @@ type KapookService struct {
 	transactions kapook.TransactionRepository
 	clk          clock.Clock
 	buySalakSvc  transaction.Service
+	// countdownDuration is how long Snapshot reports a goal's auto-purchase
+	// countdown as running before it hits zero - KAPOOK_COUNTDOWN_DURATION,
+	// the same config the worker uses to decide when to actually buy.
+	countdownDuration time.Duration
 }
 
-func NewKapookService(terms kapook.TermsRepository, goals kapook.GoalRepository, salakSvc salak.Service, accounts account.Service, db *gorm.DB, ledgerRepo transaction.LedgerRepository, transactions kapook.TransactionRepository, clk clock.Clock, buySalakSvc transaction.Service) *KapookService {
-	return &KapookService{terms: terms, goals: goals, salakSvc: salakSvc, accounts: accounts, db: db, ledgerRepo: ledgerRepo, transactions: transactions, clk: clk, buySalakSvc: buySalakSvc}
+func NewKapookService(terms kapook.TermsRepository, goals kapook.GoalRepository, salakSvc salak.Service, accounts account.Service, db *gorm.DB, ledgerRepo transaction.LedgerRepository, transactions kapook.TransactionRepository, clk clock.Clock, buySalakSvc transaction.Service, countdownDuration time.Duration) *KapookService {
+	return &KapookService{terms: terms, goals: goals, salakSvc: salakSvc, accounts: accounts, db: db, ledgerRepo: ledgerRepo, transactions: transactions, clk: clk, buySalakSvc: buySalakSvc, countdownDuration: countdownDuration}
 }
 
 var _ kapook.Service = (*KapookService)(nil)
@@ -210,19 +214,60 @@ func (s *KapookService) CreateGoal(ctx context.Context, userID, accountID, produ
 	return *goal, nil
 }
 
-func (s *KapookService) GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (domain.Goal, error) {
+func (s *KapookService) GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (*domain.Goal, error) {
 	if _, err := s.kapookAccount(ctx, userID, accountID); err != nil {
-		return domain.Goal{}, err
+		return nil, err
 	}
 
 	goal, err := s.goals.FindActiveByAccountID(ctx, accountID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return domain.Goal{}, apperror.NotFound("no active goal for this account")
+		// No active goal is the tracker's normal empty state, not an error -
+		// ownership was already verified above, so this can only mean
+		// "this account genuinely has none right now".
+		return nil, nil
 	}
 	if err != nil {
-		return domain.Goal{}, apperror.Internal("failed to look up active goal", err)
+		return nil, apperror.Internal("failed to look up active goal", err)
 	}
-	return goal, nil
+	return &goal, nil
+}
+
+// Snapshot computes GoalSnapshot's derived fields for goal: available
+// balance and target-reached are pure functions of fields already on goal;
+// the countdown needs the service's clock/duration; purchased units/count
+// and buy eligibility each need one more read (history aggregation, the
+// product's minimum purchase).
+func (s *KapookService) Snapshot(ctx context.Context, goal domain.Goal) (kapook.GoalSnapshot, error) {
+	product, err := s.salakSvc.GetProduct(ctx, goal.ProductID)
+	if err != nil {
+		return kapook.GoalSnapshot{}, err
+	}
+
+	units, count, err := s.transactions.SumPurchasedUnitsAndCount(ctx, nil, goal.ID)
+	if err != nil {
+		return kapook.GoalSnapshot{}, apperror.Internal("failed to aggregate goal purchase history", err)
+	}
+
+	var countdownRemaining *int
+	if goal.GoalReachedAt != nil {
+		deadline := goal.GoalReachedAt.Add(s.countdownDuration)
+		remaining := int(deadline.Sub(s.clk.Now()).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
+		countdownRemaining = &remaining
+	}
+
+	available := goal.AvailableBalance()
+	return kapook.GoalSnapshot{
+		Goal:                      goal,
+		AvailableBalance:          available,
+		TargetReached:             goal.GoalReachedAt != nil,
+		CountdownRemainingSeconds: countdownRemaining,
+		PurchasedUnits:            units,
+		PurchasedCount:            count,
+		BuyEligible:               available.GreaterThanOrEqual(product.MinPurchase),
+	}, nil
 }
 
 // Deposit moves money from savingsAccountID into kapookAccountID atomically,

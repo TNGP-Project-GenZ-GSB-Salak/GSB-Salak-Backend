@@ -71,6 +71,13 @@ type TransactionRepository interface {
 	// always passes the goal's already-locked tx so it can't race a
 	// concurrent withdrawal on the same goal.
 	CountByGoalAndTypesInWindow(ctx context.Context, tx *gorm.DB, goalID uuid.UUID, types []domain.TransactionType, from, to time.Time) (int, error)
+	// SumPurchasedUnitsAndCount aggregates goalID's buy_salak transactions,
+	// joined through their holding_id to salak.holdings for the unit count -
+	// derived at read time rather than stored, so it's correct whether the
+	// customer or the worker bought, with nothing to keep in sync. tx may be
+	// nil for the ambient handle; pass the caller's own tx/savepoint when the
+	// purchase being counted was written earlier in the same transaction.
+	SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (units int64, count int, err error)
 }
 
 // WithdrawalStatus describes a goal's free-withdrawal allowance for the
@@ -111,6 +118,34 @@ type BuyFromGoalResult struct {
 	GoalCompleted bool
 }
 
+// GoalSnapshot enriches a Goal with the read model the client's tracker
+// screen needs - available balance, target-reached, live countdown,
+// purchased units/count, and buy eligibility - all computed fresh at read
+// time rather than stored, so it's correct regardless of who or what last
+// touched the goal (the customer, another device, or the unattended
+// worker). See KapookService.Snapshot.
+type GoalSnapshot struct {
+	Goal domain.Goal
+	// AvailableBalance is Goal.AvailableBalance() (SavingAmount minus
+	// SalakAmount) - what a withdrawal or purchase can still draw on.
+	AvailableBalance decimal.Decimal
+	// TargetReached mirrors Goal.GoalReachedAt != nil.
+	TargetReached bool
+	// CountdownRemainingSeconds is nil unless TargetReached - the seconds
+	// left in the auto-purchase countdown, clamped to zero rather than
+	// going negative once it expires (the worker, not the client, decides
+	// when a purchase actually fires).
+	CountdownRemainingSeconds *int
+	// PurchasedUnits/PurchasedCount are derived from the goal's buy_salak
+	// transaction history (TransactionRepository.SumPurchasedUnitsAndCount),
+	// never stored on the goal itself.
+	PurchasedUnits int64
+	PurchasedCount int
+	// BuyEligible mirrors the same rule BuyFromGoal enforces on submit:
+	// AvailableBalance at least the product's MinPurchase.
+	BuyEligible bool
+}
+
 // Service is the public surface the http layer depends on.
 type Service interface {
 	Accept(ctx context.Context, userID uuid.UUID) error
@@ -120,8 +155,11 @@ type Service interface {
 	// account is active, and that goalAmount is a valid eventual purchase
 	// amount for productID (a multiple of its step, at or below its max).
 	CreateGoal(ctx context.Context, userID, accountID, productID uuid.UUID, goalAmount decimal.Decimal) (domain.Goal, error)
-	// GetActiveGoal returns apperror.NotFound if accountID has no active goal.
-	GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (domain.Goal, error)
+	// GetActiveGoal returns (nil, nil) if accountID has no active goal - a
+	// normal state for the tracker's empty-state screen, not an error.
+	// Ownership failures (wrong user, wrong account type) still return
+	// apperror.NotFound, indistinguishable from a real not-found on purpose.
+	GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (*domain.Goal, error)
 	// Deposit debits savingsAccountID and credits kapookAccountID
 	// atomically, then bumps the account's active goal's SavingAmount -
 	// rejected if that would exceed the goal's target. Any positive
@@ -158,4 +196,8 @@ type Service interface {
 	// failure rolls back to the savepoint without losing the caller's own
 	// transaction or its row locks on other claimed goals.
 	BuyFromGoalInTx(ctx context.Context, tx *gorm.DB, userID, kapookAccountID, salakAccountID uuid.UUID, amount decimal.Decimal) (BuyFromGoalResult, error)
+	// Snapshot computes GoalSnapshot's derived fields for goal - called
+	// after CreateGoal/GetActiveGoal/Deposit/Withdraw/BuyFromGoal return, so
+	// every goal-shaped response is enriched the same way from one place.
+	Snapshot(ctx context.Context, goal domain.Goal) (GoalSnapshot, error)
 }

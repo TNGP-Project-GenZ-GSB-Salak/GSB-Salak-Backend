@@ -126,8 +126,11 @@ func (f *fakeKapookService) HasAccepted(ctx context.Context, userID uuid.UUID) (
 func (f *fakeKapookService) CreateGoal(ctx context.Context, userID, accountID, productID uuid.UUID, goalAmount decimal.Decimal) (kapookdomain.Goal, error) {
 	return kapookdomain.Goal{}, nil
 }
-func (f *fakeKapookService) GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (kapookdomain.Goal, error) {
-	return kapookdomain.Goal{}, nil
+func (f *fakeKapookService) GetActiveGoal(ctx context.Context, userID, accountID uuid.UUID) (*kapookdomain.Goal, error) {
+	return nil, nil
+}
+func (f *fakeKapookService) Snapshot(ctx context.Context, goal kapookdomain.Goal) (kapook.GoalSnapshot, error) {
+	return kapook.GoalSnapshot{Goal: goal}, nil
 }
 func (f *fakeKapookService) Deposit(ctx context.Context, userID, kapookAccountID, savingsAccountID uuid.UUID, amount decimal.Decimal) (kapookdomain.Goal, error) {
 	return kapookdomain.Goal{}, nil

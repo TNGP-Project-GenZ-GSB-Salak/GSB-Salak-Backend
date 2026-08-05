@@ -35,3 +35,20 @@ func (r *GormTransactionRepository) CountByGoalAndTypesInWindow(ctx context.Cont
 		Count(&count).Error
 	return int(count), err
 }
+
+func (r *GormTransactionRepository) SumPurchasedUnitsAndCount(ctx context.Context, tx *gorm.DB, goalID uuid.UUID) (int64, int, error) {
+	if tx == nil {
+		tx = r.db
+	}
+	var result struct {
+		Units int64
+		Count int
+	}
+	err := tx.WithContext(ctx).
+		Table("kapook.kapook_transactions AS kt").
+		Select("COALESCE(SUM(h.units), 0) AS units, COUNT(kt.id) AS count").
+		Joins("JOIN salak.holdings h ON h.id = kt.holding_id").
+		Where("kt.goal_id = ? AND kt.type = ?", goalID, domain.TransactionBuySalak).
+		Scan(&result).Error
+	return result.Units, result.Count, err
+}
