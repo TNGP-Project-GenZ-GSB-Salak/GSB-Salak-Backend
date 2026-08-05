@@ -4,6 +4,9 @@ package integration
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"sync"
 	"testing"
 
 	accountdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/account/domain"
@@ -13,10 +16,12 @@ import (
 	badgeservice "github.com/ciaabcdefg/gsb-salak-backend/internal/badge/service"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/apperror"
 	"github.com/ciaabcdefg/gsb-salak-backend/internal/platform/clock"
+	salakdomain "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/domain"
 	salakrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/repository"
 	salakservice "github.com/ciaabcdefg/gsb-salak-backend/internal/salak/service"
 	txrepo "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/repository"
 	txservice "github.com/ciaabcdefg/gsb-salak-backend/internal/transaction/service"
+	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -213,4 +218,132 @@ func TestBuySalakFlow_KapookFundingAccount_Rejected(t *testing.T) {
 	var appErr *apperror.Error
 	require.ErrorAs(t, err, &appErr)
 	assert.Equal(t, apperror.KindValidation, appErr.Kind)
+}
+
+// TestBuySalakFlow_ConcurrentUsersBuyingSameProduct_NoDuplicateOrOverlappingTickets
+// answers a real question about the ticket-allocation redesign (W23): does
+// ReserveTicketRange's per-product row lock actually hold up once many
+// distinct customers - not just many calls from one test goroutine - buy
+// the same product at the same time? TestReserveTicketRange_
+// ConcurrentCallersGetDisjointContiguousRanges (holding_repo_test.go)
+// already proves the repository method itself is safe under concurrency;
+// this test exercises the *whole* BuySalakService stack instead (debit,
+// mint, credit, ledger, one top-level db.Transaction per purchase), which
+// is what a real multi-user production scenario actually calls, and would
+// also catch a duplicate that only the EXCLUDE constraint (not the row
+// lock) ends up rejecting - i.e. a bug, not just a slow query.
+//
+// This deliberately breaks the rollback-per-test pattern the same way
+// TestReserveTicketRange_ConcurrentCallersGetDisjointContiguousRanges
+// does: a *gorm.DB bound to one *sql.Tx isn't safe for concurrent
+// goroutines, so every "customer" here is a genuinely separate user,
+// account pair, and top-level transaction against sharedDB.
+func TestBuySalakFlow_ConcurrentUsersBuyingSameProduct_NoDuplicateOrOverlappingTickets(t *testing.T) {
+	if sharedDB == nil {
+		t.Skip("integration DB unreachable; run `make docker-up migrate-up` first")
+	}
+	ctx := context.Background()
+	const numCustomers = 15
+	const unitsEach = 20 // 2000 THB at unit price 100
+
+	// All fixtures are created up front, sequentially, on the main test
+	// goroutine (require/t.Fatal must never run from a spawned goroutine -
+	// testing.T explicitly documents FailNow as unsafe there). Only the
+	// purchase itself - the thing actually under test - runs concurrently.
+	product := mustCreateProduct(t, sharedDB, uniqueProductCode(), decimal.RequireFromString("100"), decimal.RequireFromString("1000"), decimal.RequireFromString("1000000"), decimal.RequireFromString("1000"))
+
+	type customer struct {
+		userID, fundingID, salakAccountID uuid.UUID
+	}
+	customers := make([]customer, numCustomers)
+	for i := range customers {
+		user := mustCreateUser(t, sharedDB, "")
+		funding := mustCreateAccount(t, sharedDB, user.ID, accountdomain.TypeSavings, decimal.RequireFromString("10000"))
+		salakAccount := mustCreateAccount(t, sharedDB, user.ID, accountdomain.TypeSalak, decimal.Zero)
+		customers[i] = customer{user.ID, funding.ID, salakAccount.ID}
+	}
+
+	t.Cleanup(func() {
+		var userIDs []uuid.UUID
+		for _, c := range customers {
+			userIDs = append(userIDs, c.userID)
+		}
+		// ledger_entries has both a debit row (funding account) and a
+		// credit row (salak account) per purchase, both carrying the same
+		// holding_id - filtering by holding_id (via this product) catches
+		// both sides regardless of which account they're on, unlike
+		// filtering by account_id alone.
+		sharedDB.Exec(`DELETE FROM transaction.ledger_entries WHERE holding_id IN (SELECT id FROM salak.holdings WHERE product_id = ?)`, product.ID)
+		sharedDB.Exec(`DELETE FROM salak.holdings WHERE product_id = ?`, product.ID)
+		sharedDB.Exec(`DELETE FROM account.accounts WHERE user_id IN (?)`, userIDs)
+		sharedDB.Exec(`DELETE FROM "user".users WHERE id IN (?)`, userIDs)
+		sharedDB.Exec(`DELETE FROM salak.ticket_sequence WHERE product_id = ?`, product.ID)
+		sharedDB.Exec(`DELETE FROM salak.products WHERE id = ?`, product.ID)
+	})
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+
+	for _, c := range customers {
+		wg.Add(1)
+		go func(c customer) {
+			defer wg.Done()
+			buySvc, _ := newBuySalakService(sharedDB) // separate connection per call - the point
+			_, err := buySvc.BuySalak(ctx, c.userID, c.fundingID, c.salakAccountID, product.ID, nil, decimal.NewFromInt(int64(unitsEach)*100))
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}(c)
+	}
+	wg.Wait()
+
+	require.Empty(t, errs, "no concurrent purchase should fail")
+
+	// Read back what actually landed in the table - this is the real
+	// source of truth for "did any two customers get the same ticket",
+	// not whatever each goroutine's own receipt claimed.
+	var holdings []salakdomain.Holding
+	require.NoError(t, sharedDB.Where("product_id = ?", product.ID).Find(&holdings).Error)
+	require.Len(t, holdings, numCustomers)
+
+	type purchase struct {
+		accountID  uuid.UUID
+		letter     string
+		start, end int64
+	}
+	parsed := make([]purchase, len(holdings))
+	for i, h := range holdings {
+		parsed[i] = purchase{accountID: h.AccountID, letter: h.TicketLetter, start: h.TicketStart, end: h.TicketEnd}
+		assert.Equal(t, int64(unitsEach-1), h.TicketEnd-h.TicketStart, "each purchase must reserve exactly %d contiguous tickets", unitsEach)
+	}
+
+	// The actual duplicate-number check: sort by (letter, start) and
+	// confirm every range is strictly disjoint from its neighbor - no
+	// shared ticket number and no overlap, letter and number together.
+	sort.Slice(parsed, func(i, j int) bool {
+		if parsed[i].letter != parsed[j].letter {
+			return parsed[i].letter < parsed[j].letter
+		}
+		return parsed[i].start < parsed[j].start
+	})
+	seen := map[string]uuid.UUID{}
+	for _, r := range parsed {
+		for n := r.start; n <= r.end; n++ {
+			key := fmt.Sprintf("%s%07d", r.letter, n)
+			if owner, dup := seen[key]; dup {
+				t.Fatalf("duplicate ticket %s: held by both account %s and account %s", key, owner, r.accountID)
+			}
+			seen[key] = r.accountID
+		}
+	}
+	for i := 1; i < len(parsed); i++ {
+		prev, cur := parsed[i-1], parsed[i]
+		if prev.letter != cur.letter {
+			continue
+		}
+		assert.Less(t, prev.end, cur.start, "overlapping ranges under letter %s: %d-%d and %d-%d", cur.letter, prev.start, prev.end, cur.start, cur.end)
+	}
 }
